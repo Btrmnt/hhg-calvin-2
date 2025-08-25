@@ -6,10 +6,7 @@
   "scripts": {
     "dev": "node --watch scripts/schedule-assistant.js",
     "test": "echo \"Tests not yet implemented\"",
-    "lint": "echo \"Linting not yet configured\"",
-    "schedule": "node scripts/schedule-assistant.js",
-    "optimize": "node scripts/calendar-optimizer.js",
-    "match": "node scripts/participant-matcher.js"
+    "lint": "echo \"Linting not yet configured\""
   },
   "author": "Btrmnt",
   "dependencies": {
