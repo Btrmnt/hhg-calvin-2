@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import fs from 'fs';
-import LLM from '@themaximalist/llm.js';
 import 'dotenv/config';
+import { ChatOpenAI } from '@langchain/openai';
+import { HumanMessage } from '@langchain/core/messages';
 
 async function convertSDMToMarkdown(csvFilePath) {
     try {
@@ -57,51 +58,51 @@ Extract data from the "Appointments to plan:" list into a table following these 
 
 Please analyze the CSV data carefully and create the markdown output following these exact specifications.
 
-Whenever specifying years, use four characters (e.g., 2023, not 23).
-`;
+Whenever specifying years, use four characters (e.g., 2023, not 23).`;
 
-        const llm = new LLM({
-            service: "openai",
-            // model: "gpt-4o-mini",
-            model: "gpt-4o",
-            // model: "o3",
-            extended: true
+        const modelConfig = {
+            // modelName: "gpt-4o",
+            modelName: "o3",
+            // temperature: 0.1,
+            temperature: 1,
+        };
+
+        const model = new ChatOpenAI({
+            ...modelConfig,
+            openAIApiKey: process.env.OPENAI_API_KEY,
         });
         
         console.log('Prompt length:', prompt.length);
+        console.log('Model config:', modelConfig);
         
         const startTime = Date.now();
         let response;
         try {
-            response = await llm.chat(prompt);
+            const messages = [new HumanMessage(prompt)];
+            response = await model.invoke(messages);
         } catch (error) {
-            console.error('LLM call error:', error.message);
+            console.error('LangChain call error:', error.message);
             console.error('Error details:', error);
             throw error;
         }
         const endTime = Date.now();
         
-        console.log('LLM call time:', (endTime - startTime) + 'ms');
+        console.log('LangChain call time:', (endTime - startTime) + 'ms');
         console.log('Response type:', typeof response);
         console.log('Response keys:', Object.keys(response || {}));
-        console.log('Full response object:', JSON.stringify(response, null, 2));
         
-        if (response && typeof response === 'object' && 'content' in response) {
-            console.log('Extended response detected');
-            console.log('Content length:', response.content?.length);
-            console.log('Content type:', typeof response.content);
-            console.log('Usage:', response.usage);
-            console.log('Service used:', response.service);
-            console.log('Messages count:', response.messages?.length);
-            console.log('Content preview:', JSON.stringify(response.content?.substring(0, 100)));
-            console.log('Full response content:', response.content);
-            return response.content;
-        } else {
-            console.log('Standard response');
-            console.log('Response length:', response?.length);
-            console.log('Response preview:', JSON.stringify(response?.substring(0, 100)));
-            return response;
+        // LangChain response structure
+        const content = response.content;
+        console.log('Content length:', content?.length);
+        console.log('Content type:', typeof content);
+        console.log('Content preview:', JSON.stringify(content?.substring(0, 100)));
+        
+        // Log token usage if available
+        if (response.usage_metadata) {
+            console.log('Token usage:', response.usage_metadata);
         }
+        
+        return content;
         
     } catch (error) {
         console.error('Error converting SDM to markdown:', error);
@@ -113,8 +114,8 @@ async function main() {
     const args = process.argv.slice(2);
     
     if (args.length === 0) {
-        console.log('Usage: node sdm-to-markdown.js <csv-file-path>');
-        console.log('Example: node sdm-to-markdown.js sdm-csv-example.txt');
+        console.log('Usage: node sdm-extractor.js <csv-file-path>');
+        console.log('Example: node sdm-extractor.js sdm-csv-example.txt');
         process.exit(1);
     }
     

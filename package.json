@@ -13,7 +13,9 @@
   },
   "author": "Btrmnt",
   "dependencies": {
-    "@themaximalist/llm.js": "^1.0.0"
+    "@langchain/core": "^0.3.72",
+    "@langchain/openai": "^0.6.9",
+    "langchain": "^0.3.31"
   },
   "devDependencies": {
     "dotenv": "^16.0.0"
