@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import fs from 'fs';
 import 'dotenv/config';
 import { ChatOpenAI } from '@langchain/openai';
@@ -137,45 +135,4 @@ Convert all dates to ISO format (YYYY-MM-DD). For example:
 }
 
 
-async function main() {
-    const args = process.argv.slice(2);
-    
-    if (args.length === 0) {
-        console.log('Usage: node sdm-extractor.js <csv-file-path>');
-        console.log('Example: node sdm-extractor.js sdm-csv-example.txt');
-        process.exit(1);
-    }
-    
-    const csvFilePath = args[0];
-    
-    if (!fs.existsSync(csvFilePath)) {
-        console.error(`Error: File ${csvFilePath} does not exist`);
-        process.exit(1);
-    }
-    
-    try {
-        console.log(`Converting ${csvFilePath} to structured data...`);
-        
-        // Get structured data
-        const structuredData = await convertSDMToStructured(csvFilePath);
-        
-        console.log('\n=== STRUCTURED DATA ===\n');
-        console.log(JSON.stringify(structuredData, null, 2));
-        
-        // Save structured data only
-        const structuredPath = csvFilePath.replace(/\.[^/.]+$/, '') + '-structured.json';
-        fs.writeFileSync(structuredPath, JSON.stringify(structuredData, null, 2));
-        
-        console.log(`\nStructured data saved to: ${structuredPath}`);
-        
-    } catch (error) {
-        console.error('Conversion failed:', error.message);
-        process.exit(1);
-    }
-}
-
 export { convertSDMToStructured };
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-    main();
-}

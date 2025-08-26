@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import 'dotenv/config';
 
 /**
@@ -245,7 +243,7 @@ class PractitionerAvailabilityCalculator {
                 end: endDate
             },
             summary: {
-                totalAvailabilitySlots: availabilitySlots.length,
+                totalAvailabilityPeriods: availabilitySlots.length,
                 totalAppointments: scheduleResult.data.appointments?.length || 0,
                 totalFreeSlots: freeTimeSlots.length,
                 totalFreeMinutes: freeTimeSlots.reduce((sum, slot) => sum + (slot.duration / (1000 * 60)), 0)
@@ -261,42 +259,4 @@ class PractitionerAvailabilityCalculator {
     }
 }
 
-async function main() {
-    const args = process.argv.slice(2);
-    
-    if (args.length < 3) {
-        console.log('Usage: node practitioner-availability.js <practitioner-id> <start-date> <end-date>');
-        console.log('Example: node practitioner-availability.js 46932 2025-08-01T00:00:00 2025-08-31T23:59:59');
-        process.exit(1);
-    }
-    
-    const [practitionerId, startDate, endDate] = args;
-    
-    try {
-        const calculator = new PractitionerAvailabilityCalculator();
-        const result = await calculator.calculateAvailability(
-            parseInt(practitionerId), 
-            startDate, 
-            endDate
-        );
-        
-        console.log('=== AVAILABILITY CALCULATION RESULTS ===\n');
-        console.log(JSON.stringify(result, null, 2));
-        
-        // Save results to file
-        const outputPath = `practitioner-${practitionerId}-availability.json`;
-        const fs = await import('fs');
-        fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));
-        console.log(`\nResults saved to: ${outputPath}`);
-        
-    } catch (error) {
-        console.error('Error calculating availability:', error.message);
-        process.exit(1);
-    }
-}
-
 export { PractitionerAvailabilityCalculator };
-
-if (import.meta.url === `file://${process.argv[1]}`) {
-    main();
-}
