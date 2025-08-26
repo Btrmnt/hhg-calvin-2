@@ -250,21 +250,13 @@ class PractitionerAvailabilityCalculator {
                 totalFreeSlots: freeTimeSlots.length,
                 totalFreeMinutes: freeTimeSlots.reduce((sum, slot) => sum + (slot.duration / (1000 * 60)), 0)
             },
-            freeTimeSlots: freeTimeSlots.map(slot => {
-                // Convert to +10:00 timezone for debugging
-                const startLocal = new Date(slot.startDateTime.getTime() + (10 * 60 * 60 * 1000));
-                const endLocal = new Date(slot.endDateTime.getTime() + (10 * 60 * 60 * 1000));
-                
-                return {
-                    startDateTime: startLocal.toISOString().replace('Z', '+10:00'),
-                    endDateTime: endLocal.toISOString().replace('Z', '+10:00'),
-                    startDateTimeUTC: slot.startDateTime.toISOString(),
-                    endDateTimeUTC: slot.endDateTime.toISOString(),
-                    duration: `${Math.floor(slot.duration / (1000 * 60))} minutes`,
-                    durationMs: slot.duration,
-                    locationId: slot.locationId
-                };
-            })
+            freeTimeSlots: freeTimeSlots.map(slot => ({
+                startDateTime: slot.startDateTime.toISOString(),
+                endDateTime: slot.endDateTime.toISOString(),
+                duration: `${Math.floor(slot.duration / (1000 * 60))} minutes`,
+                durationMs: slot.duration,
+                locationId: slot.locationId
+            }))
         };
     }
 }
