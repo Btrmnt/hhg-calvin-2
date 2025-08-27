@@ -58,6 +58,7 @@ Please analyze the availability and instructions to suggest optimal appointment 
 4. Participant preferences and constraints
 5. Optimal scheduling to minimize conflicts and maximize efficiency
 6. Service types and their specific requirements
+7. Non-reporting sessions should typically be scheduled from Monday mornings through to Thursday lunch times where possible. Reporting sessions should be scheduled from Thursday afternoons through to Friday afternoons where possible.
 
 For each appointment suggestion, provide:
 - start: Start time in ISO format (YYYY-MM-DDTHH:MM:SSZ)
