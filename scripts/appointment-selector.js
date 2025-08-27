@@ -49,9 +49,10 @@ class AppointmentSelector {
      * @param {Object} sdmData - Extracted participant and appointment data from SDM
      * @param {Array} suggestionResults - Array of suggestion engine results for each appointment
      * @param {Array} conflictResults - Array of conflict checker results for each suggestion set
+     * @param {string} schedulingInstructions - Additional scheduling instructions and context for the LLM
      * @returns {Object} Structured appointment selections with reasoning
      */
-    async selectAppointments(sdmData, suggestionResults, conflictResults) {
+    async selectAppointments(sdmData, suggestionResults, conflictResults, schedulingInstructions = '') {
         // Validate inputs
         if (!sdmData || !sdmData.appointments || !Array.isArray(sdmData.appointments)) {
             throw new Error('Invalid SDM data structure - missing appointments array');
@@ -66,7 +67,7 @@ class AppointmentSelector {
         }
 
         // Build comprehensive prompt with all data and rules
-        const prompt = this.buildSelectionPrompt(sdmData, suggestionResults, conflictResults);
+        const prompt = this.buildSelectionPrompt(sdmData, suggestionResults, conflictResults, schedulingInstructions);
 
         try {
             // Get structured response from LLM
@@ -95,9 +96,10 @@ class AppointmentSelector {
      * @param {Object} sdmData - SDM extraction data
      * @param {Array} suggestionResults - Suggestion engine results
      * @param {Array} conflictResults - Conflict checker results
+     * @param {string} schedulingInstructions - Additional scheduling instructions
      * @returns {string} Formatted prompt for LLM
      */
-    buildSelectionPrompt(sdmData, suggestionResults, conflictResults) {
+    buildSelectionPrompt(sdmData, suggestionResults, conflictResults, schedulingInstructions = '') {
         const { participant, planDetails, servicePlanning, appointments } = sdmData;
 
         let prompt = `# APPOINTMENT SELECTION TASK
@@ -121,7 +123,11 @@ class AppointmentSelector {
 - **Last Participant of Day**: ${servicePlanning.lastParticipantOfDay}
 - **Service Frequency**: ${servicePlanning.serviceFrequency}
 
-## SCHEDULING RULES (PRIORITY ORDER)
+${schedulingInstructions ? `## ADDITIONAL SCHEDULING INSTRUCTIONS
+
+${schedulingInstructions}
+
+` : ''}## SCHEDULING RULES (PRIORITY ORDER)
 1. **CONFLICTS**: Never select appointments marked as conflicted in the conflict checker results
 2. **PARTICIPANT PREFERENCES**: Respect participant's suitable days and times wherever possible
 3. **SESSION TYPE TIMING**: 

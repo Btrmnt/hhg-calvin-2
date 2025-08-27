@@ -42,14 +42,14 @@ class AppointmentSuggestionEngine {
     }
 
 
-    async callLLM(availabilityData, appointmentInstructions) {
+    async callLLM(availabilityData, schedulingInstructions) {
         const prompt = `You are an expert appointment scheduling assistant. You will receive practitioner availability data and instructions about appointments that need to be scheduled.
 
 PRACTITIONER AVAILABILITY DATA:
 ${availabilityData}
 
-APPOINTMENT INSTRUCTIONS:
-${appointmentInstructions}
+SCHEDULING INSTRUCTIONS:
+${schedulingInstructions}
 
 Please analyze the availability and instructions to suggest optimal appointment times. Unless otherwise specified in the instructions, provide 5 different time slot suggestions for each requested appointment. Consider:
 1. Available time slots from the practitioner's schedule
@@ -98,12 +98,12 @@ Also provide a summary with:
         }
     }
 
-    async suggestAppointments(availabilityData, appointmentInstructions) {
-        console.log('Processing availability data and appointment instructions...');
+    async suggestAppointments(availabilityData, schedulingInstructions) {
+        console.log('Processing availability data and scheduling instructions...');
         
         console.log('Calling LLM for appointment suggestions...');
         
-        const suggestions = await this.callLLM(availabilityData, appointmentInstructions);
+        const suggestions = await this.callLLM(availabilityData, schedulingInstructions);
         
         return {
             ...suggestions,
