@@ -1,4 +1,3 @@
-import fs from 'fs';
 import 'dotenv/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage } from '@langchain/core/messages';
@@ -40,14 +39,13 @@ const sdmStructuredSchema = z.object({
     appointments: z.array(appointmentSchema).describe("List of appointments to be planned")
 });
 
-async function convertSDMToStructured(csvFilePath) {
+async function convertSDMToStructured(inputData) {
     try {
-        const csvContent = fs.readFileSync(csvFilePath, 'utf8');
         
-        const prompt = `Extract and structure data from this SDM planning tool CSV data.
+        const prompt = `Extract and structure data from this SDM planning tool data.
 
-CSV Data:
-${csvContent}
+Input Data:
+${inputData}
 
 Please extract the following information:
 
