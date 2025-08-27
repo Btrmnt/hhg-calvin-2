@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch scripts/schedule-assistant.js",
-    "test": "echo \"Tests not yet implemented\"",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "lint": "echo \"Linting not yet configured\""
   },
   "author": "Btrmnt",
@@ -15,7 +15,8 @@
     "langchain": "^0.3.31"
   },
   "devDependencies": {
-    "dotenv": "^16.0.0"
+    "dotenv": "^16.0.0",
+    "jest": "^30.0.5"
   },
   "engines": {
     "node": ">=18.0.0"
