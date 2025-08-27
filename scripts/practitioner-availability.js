@@ -17,12 +17,12 @@ class PractitionerAvailabilityCalculator {
     }
 
     /**
-     * Retrieves the existing schedule for a specified practitioner from Splose
+     * Retrieves appointments for a specified practitioner from Splose
      */
-    async getPractitionerCurrentSchedule(practitionerId, startDateFrom = null, startDateTo = null) {
-        console.log(`Fetching schedule for practitioner ${practitionerId} from ${startDateFrom} to ${startDateTo}`);
+    async getPractitionerCurrentSchedule(practitionerId, startAfter = null, startBefore = null, brandName = null) {
+        console.log(`Fetching appointments for practitioner ${practitionerId} from ${startAfter} to ${startBefore}`);
         
-        const url = `${this.windmillBaseUrl}/api/w/${this.windmillWorkspaceId}/jobs/run_wait_result/f/f/splose/get_practitioner_schedule`;
+        const url = `${this.windmillBaseUrl}/api/w/${this.windmillWorkspaceId}/jobs/run_wait_result/f/f/splose/get_appointments`;
         const headers = {
             'Authorization': `Bearer ${this.windmillToken}`,
             'Content-Type': 'application/json',
@@ -33,11 +33,14 @@ class PractitionerAvailabilityCalculator {
         };
         
         // Only include date parameters if provided
-        if (startDateFrom !== null) {
-            data.startDateFrom = startDateFrom;
+        if (startAfter !== null) {
+            data.startAfter = startAfter;
         }
-        if (startDateTo !== null) {
-            data.startDateTo = startDateTo;
+        if (startBefore !== null) {
+            data.startBefore = startBefore;
+        }
+        if (brandName !== null) {
+            data.brandName = brandName;
         }
         
         try {
@@ -58,13 +61,13 @@ class PractitionerAvailabilityCalculator {
                 const errorText = await response.text();
                 return {
                     status: 'error',
-                    error_message: `Failed to retrieve schedule for practitioner ${practitionerId}. ${response.status} ${errorText}`
+                    error_message: `Failed to retrieve appointments for practitioner ${practitionerId}. ${response.status} ${errorText}`
                 };
             }
         } catch (error) {
             return {
                 status: 'error',
-                error_message: `Network error retrieving schedule: ${error.message}`
+                error_message: `Network error retrieving appointments: ${error.message}`
             };
         }
     }
@@ -206,7 +209,7 @@ class PractitionerAvailabilityCalculator {
         console.log(`\nCalculating availability for practitioner ${practitionerId}`);
         console.log(`Date range: ${startDate} to ${endDate}\n`);
         
-        // Fetch schedule and availability data
+        // Fetch appointments and availability data
         const [scheduleResult, availabilityResult] = await Promise.all([
             this.getPractitionerCurrentSchedule(practitionerId, startDate, endDate),
             this.getPractitionerCurrentAvailability(practitionerId, startDate, endDate)
@@ -220,7 +223,7 @@ class PractitionerAvailabilityCalculator {
             throw new Error(availabilityResult.error_message);
         }
         
-        console.log(`Found ${scheduleResult.data.appointments?.length || 0} appointments`);
+        console.log(`Found ${scheduleResult.data?.length || 0} appointments`);
         console.log(`Found ${availabilityResult.data.data?.length || 0} availability entries\n`);
         
         // Parse availability slots (already expanded from Windmill)
@@ -231,7 +234,7 @@ class PractitionerAvailabilityCalculator {
         // Calculate free time by removing appointments from availability
         const freeTimeSlots = this.calculateFreeTimeSlots(
             availabilitySlots,
-            scheduleResult.data.appointments || []
+            scheduleResult.data || []
         );
         
         console.log(`Calculated ${freeTimeSlots.length} free time slots\n`);
@@ -244,7 +247,7 @@ class PractitionerAvailabilityCalculator {
             },
             summary: {
                 totalAvailabilityPeriods: availabilitySlots.length,
-                totalAppointments: scheduleResult.data.appointments?.length || 0,
+                totalAppointments: scheduleResult.data?.length || 0,
                 totalFreeSlots: freeTimeSlots.length,
                 totalFreeMinutes: freeTimeSlots.reduce((sum, slot) => sum + (slot.duration / (1000 * 60)), 0)
             },
