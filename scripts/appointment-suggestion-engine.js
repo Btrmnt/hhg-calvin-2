@@ -42,14 +42,22 @@ class AppointmentSuggestionEngine {
     }
 
 
-    async callLLM(availabilityData, schedulingInstructions) {
-        const prompt = `You are an expert appointment scheduling assistant. You will receive practitioner availability data and instructions about appointments that need to be scheduled.
+    async callLLM(appointment, caseDetails = null, availabilityData, schedulingInstructions = '') {
+        const prompt = `You are an expert appointment scheduling assistant. You will receive appointment details, case information, practitioner availability data and scheduling instructions.
 
-PRACTITIONER AVAILABILITY DATA:
+APPOINTMENT TO SCHEDULE:
+${JSON.stringify(appointment, null, 2)}
+
+${caseDetails ? `CASE DETAILS:
+${JSON.stringify(caseDetails, null, 2)}
+
+` : ''}PRACTITIONER AVAILABILITY DATA:
 ${availabilityData}
 
-SCHEDULING INSTRUCTIONS:
+${schedulingInstructions ? `SCHEDULING INSTRUCTIONS:
 ${schedulingInstructions}
+
+` : ''}
 
 Please analyze the availability and instructions to suggest optimal appointment times. Unless otherwise specified in the instructions, provide 5 different time slot suggestions for each requested appointment. Consider:
 1. Available time slots from the practitioner's schedule
@@ -98,12 +106,20 @@ Also provide a summary with:
         }
     }
 
-    async suggestAppointments(availabilityData, schedulingInstructions) {
-        console.log('Processing availability data and scheduling instructions...');
+    /**
+     * Suggest optimal appointment times based on appointment details and availability
+     * @param {Object} appointment - Details of the appointment to schedule
+     * @param {Object|null} caseDetails - Optional case details for additional context
+     * @param {string} availabilityData - Practitioner availability data
+     * @param {string} schedulingInstructions - Optional additional scheduling instructions
+     * @returns {Object} Structured appointment suggestions with reasoning
+     */
+    async suggestAppointments(appointment, caseDetails = null, availabilityData, schedulingInstructions = '') {
+        console.log('Processing appointment details, case details, availability data and scheduling instructions...');
         
         console.log('Calling LLM for appointment suggestions...');
         
-        const suggestions = await this.callLLM(availabilityData, schedulingInstructions);
+        const suggestions = await this.callLLM(appointment, caseDetails, availabilityData, schedulingInstructions);
         
         return {
             ...suggestions,
