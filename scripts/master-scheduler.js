@@ -32,7 +32,7 @@ class MasterScheduler {
         console.log('🚀 MASTER SCHEDULER - END-TO-END APPOINTMENT SCHEDULING');
         console.log('='.repeat(60));
         console.log(`⚙️  Configuration: Practitioner ${practitionerId}`);
-        console.log(`⏰ Started at: ${new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} AEST`);
+        console.log(`⏰ Started at: ${new Date().toLocaleString()}`);
         console.log(`📅 Date range will be determined from SDM data`);
         console.log();
         
@@ -117,24 +117,28 @@ class MasterScheduler {
                         const utcEnd = endDate.toISOString().substring(11, 16);
                         const utcTime = `${utcStart}-${utcEnd}`;
                         
-                        // Local AEST time
+                        // Use practitioner's actual timezone
+                        const practitionerTimezone = availability.practitionerTimezone || 'Australia/Melbourne';
+                        const timezoneAbbr = this.getTimezoneAbbr(practitionerTimezone);
+                        
+                        // Local time in practitioner's timezone
                         const localStart = startDate.toLocaleString('en-AU', { 
                             month: 'short', 
                             day: 'numeric',
                             hour: '2-digit', 
                             minute: '2-digit',
                             hour12: false,
-                            timeZone: 'Australia/Melbourne' 
+                            timeZone: practitionerTimezone 
                         });
                         const localEnd = endDate.toLocaleString('en-AU', { 
                             hour: '2-digit', 
                             minute: '2-digit',
                             hour12: false,
-                            timeZone: 'Australia/Melbourne' 
+                            timeZone: practitionerTimezone 
                         });
                         
-                        const dayOfWeek = startDate.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
-                        console.log(`      ${sugIndex + 1}. ${status} ${dayOfWeek} ${localStart}-${localEnd} AEST | ${utcTime} UTC (${suggestion.confidence})`);
+                        const dayOfWeek = startDate.toLocaleDateString('en-US', { weekday: 'short', timeZone: practitionerTimezone });
+                        console.log(`      ${sugIndex + 1}. ${status} ${dayOfWeek} ${localStart}-${localEnd} ${timezoneAbbr} | ${utcTime} UTC (${suggestion.confidence})`);
                     });
                 }
 
@@ -197,7 +201,7 @@ class MasterScheduler {
                 },
                 appointmentResults,
                 selection: selectionResult,
-                humanReadableReport: this.generateHumanReadableReport(selectionResult, sdmData)
+                humanReadableReport: this.generateHumanReadableReport(selectionResult, sdmData, availability.practitionerTimezone)
             };
 
             const step5Duration = ((Date.now() - step5StartTime) / 1000).toFixed(2);
@@ -218,7 +222,7 @@ class MasterScheduler {
             console.log(`   Step 4 (AI Selection): ${step4Duration}s`);
             console.log(`   Step 5 (Results Generation): ${step5Duration}s`);
             console.log(`   📊 TOTAL TIME: ${totalDuration}s`);
-            console.log(`   🏁 Finished at: ${new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} AEST`);
+            console.log(`   🏁 Finished at: ${new Date().toLocaleString()}`);
             console.log('='.repeat(60));
             return results;
 
@@ -232,13 +236,33 @@ class MasterScheduler {
     }
 
     /**
-     * Generate human-readable report with AEST timezone conversion
+     * Get timezone abbreviation for display
+     * @param {string} timezone - Timezone identifier
+     * @returns {string} Timezone abbreviation
+     */
+    getTimezoneAbbr(timezone) {
+        // Simple mapping for common Australian timezones
+        const timezoneMap = {
+            'Australia/Melbourne': 'AEST/AEDT',
+            'Australia/Sydney': 'AEST/AEDT', 
+            'Australia/Brisbane': 'AEST',
+            'Australia/Adelaide': 'ACST/ACDT',
+            'Australia/Perth': 'AWST',
+            'Australia/Darwin': 'ACST'
+        };
+        return timezoneMap[timezone] || timezone.split('/')[1] || timezone;
+    }
+
+    /**
+     * Generate human-readable report with practitioner timezone conversion
      * @param {Object} selectionResult - Results from appointment selector
      * @param {Object} sdmData - Original SDM data
+     * @param {string} practitionerTimezone - Practitioner's timezone
      * @returns {string} Formatted report
      */
-    generateHumanReadableReport(selectionResult, sdmData) {
+    generateHumanReadableReport(selectionResult, sdmData, practitionerTimezone = 'Australia/Melbourne') {
         const { natural_response, structured_response, status } = selectionResult;
+        const timezoneAbbr = this.getTimezoneAbbr(practitionerTimezone);
         
         let report = `# 📅 APPOINTMENT SCHEDULING REPORT\n\n`;
         
@@ -261,10 +285,6 @@ class MasterScheduler {
                 const startUTC = new Date(apt.start);
                 const endUTC = new Date(apt.end);
                 
-                // Convert to AEST (UTC+10, but handle DST if needed)
-                const startAEST = new Date(startUTC.getTime() + (10 * 60 * 60 * 1000));
-                const endAEST = new Date(endUTC.getTime() + (10 * 60 * 60 * 1000));
-                
                 const dateFormatOptions = {
                     weekday: 'long',
                     year: 'numeric',
@@ -272,14 +292,14 @@ class MasterScheduler {
                     day: 'numeric',
                     hour: '2-digit',
                     minute: '2-digit',
-                    timeZone: 'Australia/Melbourne'
+                    timeZone: practitionerTimezone
                 };
 
                 const startFormatted = startUTC.toLocaleString('en-AU', dateFormatOptions);
                 const endFormatted = endUTC.toLocaleString('en-AU', { ...dateFormatOptions, weekday: undefined, year: undefined, month: undefined, day: undefined });
 
                 report += `### ${index + 1}. ${apt.service}\n`;
-                report += `- **📅 Date & Time:** ${startFormatted} - ${endFormatted} (AEST)\n`;
+                report += `- **📅 Date & Time:** ${startFormatted} - ${endFormatted} (${timezoneAbbr})\n`;
                 report += `- **📍 Location:** ${apt.locationId}\n`;
                 report += `- **🏥 Session Type:** ${apt.isReportingSession ? 'Reporting Session' : 'Non-Reporting Session'}\n`;
                 report += `- **⏰ Day Pattern:** ${apt.dayOfWeek} ${apt.timeOfDay}\n`;
@@ -318,7 +338,7 @@ class MasterScheduler {
         }
 
         report += `---\n`;
-        report += `*Report generated on ${new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} AEST*\n`;
+        report += `*Report generated on ${new Date().toLocaleString('en-AU', { timeZone: practitionerTimezone })} ${timezoneAbbr}*\n`;
 
         return report;
     }
