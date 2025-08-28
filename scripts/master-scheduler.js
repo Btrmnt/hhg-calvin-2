@@ -45,8 +45,9 @@ class MasterScheduler {
             const step1Duration = ((Date.now() - step1StartTime) / 1000).toFixed(2);
             // Extract appointment date range from SDM data
             const appointmentDates = sdmData.appointments.flatMap(apt => [apt.dateRangeStart, apt.dateRangeEnd]);
-            const earliestDate = appointmentDates.reduce((min, date) => date < min ? date : min);
-            const latestDate = appointmentDates.reduce((max, date) => date > max ? date : max);
+            const validDates = appointmentDates.filter(date => date && date !== 'undefined');
+            const earliestDate = validDates.length > 0 ? validDates.reduce((min, date) => date < min ? date : min) : startDate;
+            const latestDate = validDates.length > 0 ? validDates.reduce((max, date) => date > max ? date : max) : endDate;
             
             console.log(`✅ Extracted ${sdmData.appointments.length} appointments for ${sdmData.participant.participantName}`);
             console.log(`📅 Plan period: ${sdmData.planDetails.planStartDate} to ${sdmData.planDetails.planEndDate}`);
@@ -95,20 +96,17 @@ class MasterScheduler {
                     schedulingInstructions
                 );
 
-                // Check for conflicts
-                const conflicts = this.conflictChecker.checkConflicts(availability, suggestions);
+                // Check for conflicts and get enhanced suggestions with conflict status
+                const enhancedSuggestions = this.conflictChecker.checkConflicts(availability, suggestions);
 
-                console.log(`   ✅ [${index + 1}] Generated ${suggestions.summary.totalAppointmentsSuggested} suggestions`);
-                console.log(`   🔍 [${index + 1}] Conflict check: ${conflicts.summary.totalValid} valid, ${conflicts.summary.totalConflicted} conflicted`);
+                console.log(`   ✅ [${index + 1}] Generated ${enhancedSuggestions.summary.totalAppointmentsSuggested} suggestions`);
+                console.log(`   🔍 [${index + 1}] Conflict check: ${enhancedSuggestions.summary.totalValid} valid, ${enhancedSuggestions.summary.totalConflicted} conflicted`);
                 
-                // Debug: Show all suggestions with conflict status
-                if (suggestions.suggestedAppointments && suggestions.suggestedAppointments.length > 0) {
+                // Debug: Show all suggestions with conflict status (now directly available)
+                if (enhancedSuggestions.suggestedAppointments && enhancedSuggestions.suggestedAppointments.length > 0) {
                     console.log(`   📋 [${index + 1}] Suggestions for ${appointment.service}:`);
-                    suggestions.suggestedAppointments.forEach((suggestion, sugIndex) => {
-                        const isConflicted = conflicts.conflictedAppointments.some(conflicted => 
-                            conflicted.start === suggestion.start && conflicted.end === suggestion.end
-                        );
-                        const status = isConflicted ? '❌' : '✅';
+                    enhancedSuggestions.suggestedAppointments.forEach((suggestion, sugIndex) => {
+                        const status = suggestion.hasConflict ? '❌' : '✅';
                         const startDate = new Date(suggestion.start);
                         const endDate = new Date(suggestion.end);
                         
@@ -144,8 +142,7 @@ class MasterScheduler {
 
                 return {
                     appointment,
-                    suggestions,
-                    conflicts,
+                    suggestions: enhancedSuggestions,
                     index
                 };
             });
@@ -162,12 +159,10 @@ class MasterScheduler {
             console.log('-'.repeat(50));
             
             const suggestionResults = appointmentResults.map(result => result.suggestions);
-            const conflictResults = appointmentResults.map(result => result.conflicts);
             
             const selectionResult = await this.appointmentSelector.selectAppointments(
                 sdmData,
                 suggestionResults,
-                conflictResults,
                 availability,
                 schedulingInstructions
             );

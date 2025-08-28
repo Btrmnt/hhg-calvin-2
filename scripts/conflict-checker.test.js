@@ -80,8 +80,10 @@ describe('ConflictChecker', () => {
 
             const result = conflictChecker.checkConflicts(mockPractitionerAvailability, suggestedAppointments);
 
-            expect(result.conflictedAppointments).toHaveLength(0);
-            expect(result.validAppointments).toHaveLength(2);
+            // Check that we have enhanced suggestions with conflict status
+            expect(result.suggestedAppointments).toHaveLength(2);
+            expect(result.suggestedAppointments[0].hasConflict).toBe(false);
+            expect(result.suggestedAppointments[1].hasConflict).toBe(false);
             expect(result.summary.totalConflicted).toBe(0);
             expect(result.summary.totalValid).toBe(2);
         });
@@ -110,8 +112,8 @@ describe('ConflictChecker', () => {
 
             const result = conflictChecker.checkConflicts(mockPractitionerAvailability, suggestedAppointments);
 
-            expect(result.conflictedAppointments).toHaveLength(0);
-            expect(result.validAppointments).toHaveLength(1);
+            expect(result.suggestedAppointments).toHaveLength(1);
+            expect(result.suggestedAppointments[0].hasConflict).toBe(false);
         });
     });
 
@@ -151,13 +153,14 @@ describe('ConflictChecker', () => {
 
             const result = conflictChecker.checkConflicts(mockPractitionerAvailability, suggestedAppointments);
 
-            expect(result.conflictedAppointments).toHaveLength(2);
-            expect(result.validAppointments).toHaveLength(0);
+            expect(result.suggestedAppointments).toHaveLength(2);
+            expect(result.suggestedAppointments[0].hasConflict).toBe(true);
+            expect(result.suggestedAppointments[1].hasConflict).toBe(true);
             expect(result.summary.totalConflicted).toBe(2);
             expect(result.summary.totalValid).toBe(0);
             
-            expect(result.conflictedAppointments[0].conflicts).toContain('No available time slot found for this appointment');
-            expect(result.conflictedAppointments[1].conflicts).toContain('No available time slot found for this appointment');
+            expect(result.suggestedAppointments[0].conflictDetails).toContain('No available time slot found for this appointment');
+            expect(result.suggestedAppointments[1].conflictDetails).toContain('No available time slot found for this appointment');
         });
 
         test('should detect partial overlap conflicts', () => {
@@ -184,8 +187,9 @@ describe('ConflictChecker', () => {
 
             const result = conflictChecker.checkConflicts(mockPractitionerAvailability, suggestedAppointments);
 
-            expect(result.conflictedAppointments).toHaveLength(1);
-            expect(result.conflictedAppointments[0].conflicts[0].type).toBe('partial_overlap');
+            expect(result.suggestedAppointments).toHaveLength(1);
+            expect(result.suggestedAppointments[0].hasConflict).toBe(true);
+            expect(result.suggestedAppointments[0].conflictDetails[0].type).toBe('partial_overlap');
         });
 
         test('should detect wrong location conflicts', () => {
@@ -212,8 +216,9 @@ describe('ConflictChecker', () => {
 
             const result = conflictChecker.checkConflicts(mockPractitionerAvailability, suggestedAppointments);
 
-            expect(result.conflictedAppointments).toHaveLength(1);
-            expect(result.conflictedAppointments[0].conflicts).toContain('No available time slot found for this appointment');
+            expect(result.suggestedAppointments).toHaveLength(1);
+            expect(result.suggestedAppointments[0].hasConflict).toBe(true);
+            expect(result.suggestedAppointments[0].conflictDetails).toContain('No available time slot found for this appointment');
         });
     });
 
@@ -295,8 +300,7 @@ describe('ConflictChecker', () => {
 
             const result = conflictChecker.checkConflicts(mockPractitionerAvailability, emptySuggestions);
 
-            expect(result.conflictedAppointments).toHaveLength(0);
-            expect(result.validAppointments).toHaveLength(0);
+            expect(result.suggestedAppointments).toHaveLength(0);
             expect(result.summary.totalConflicted).toBe(0);
             expect(result.summary.totalValid).toBe(0);
         });
@@ -334,8 +338,9 @@ describe('ConflictChecker', () => {
 
             const result = conflictChecker.checkConflicts(noAvailability, suggestedAppointments);
 
-            expect(result.conflictedAppointments).toHaveLength(1);
-            expect(result.conflictedAppointments[0].conflicts).toContain('No available time slot found for this appointment');
+            expect(result.suggestedAppointments).toHaveLength(1);
+            expect(result.suggestedAppointments[0].hasConflict).toBe(true);
+            expect(result.suggestedAppointments[0].conflictDetails).toContain('No available time slot found for this appointment');
         });
 
         test('should handle invalid date formats gracefully', () => {
@@ -362,8 +367,9 @@ describe('ConflictChecker', () => {
 
             const result = conflictChecker.checkConflicts(mockPractitionerAvailability, suggestedAppointments);
             
-            expect(result.conflictedAppointments).toHaveLength(1);
-            expect(result.conflictedAppointments[0].conflicts).toContain('Invalid appointment start or end time format');
+            expect(result.suggestedAppointments).toHaveLength(1);
+            expect(result.suggestedAppointments[0].hasConflict).toBe(true);
+            expect(result.suggestedAppointments[0].conflictDetails).toContain('Invalid appointment start or end time format');
         });
     });
 });

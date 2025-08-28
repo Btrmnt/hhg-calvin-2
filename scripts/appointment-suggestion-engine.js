@@ -3,6 +3,8 @@ import fs from 'fs';
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage } from '@langchain/core/messages';
 import { z } from 'zod';
+import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
+import { parseISO } from 'date-fns';
 
 const appointmentSuggestionSchema = z.object({
     suggestedAppointments: z.array(z.object({
@@ -59,12 +61,12 @@ class AppointmentSuggestionEngine {
                 const endUTC = new Date(slot.endDateTime);
                 
                 // Convert to local time string in ISO-like format for LLM clarity
-                const localStart = startUTC.toLocaleString('sv-SE', { timeZone: practitionerTimezone });
-                const localEnd = endUTC.toLocaleString('sv-SE', { timeZone: practitionerTimezone });
+                const localStart = formatInTimeZone(startUTC, practitionerTimezone, 'yyyy-MM-dd HH:mm:ss');
+                const localEnd = formatInTimeZone(endUTC, practitionerTimezone, 'yyyy-MM-dd HH:mm:ss');
                 
                 // Get day and time context in local timezone
                 const dayOfWeek = startUTC.toLocaleDateString('en-US', { weekday: 'long', timeZone: practitionerTimezone });
-                const timeOfDay = this.getTimeOfDay(startUTC, practitionerTimezone);
+                const timeOfDay = this.getTimeOfDayRange(startUTC, endUTC, practitionerTimezone);
                 
                 return {
                     startDateTime: localStart,
@@ -72,8 +74,7 @@ class AppointmentSuggestionEngine {
                     duration: slot.duration,
                     locationId: slot.locationId,
                     dayOfWeek: dayOfWeek,
-                    timeOfDay: timeOfDay,
-                    localTimeDescription: `${dayOfWeek} ${timeOfDay}`
+                    timeOfDay: timeOfDay
                 };
             })
         };
@@ -103,46 +104,62 @@ class AppointmentSuggestionEngine {
      * @returns {string} UTC time in ISO format
      */
     convertLocalToUTC(localTimeString, timezone) {
-        // Create date object treating the string as being in the specified timezone
-        const tempDate = new Date(localTimeString);
-        
-        // Get what this time would be in UTC vs the specified timezone
-        const utcTime = tempDate.getTime() + (tempDate.getTimezoneOffset() * 60000);
-        
-        // Create new date in the target timezone 
-        const targetDate = new Date(utcTime + (this.getTimezoneOffset(timezone, tempDate) * 60000));
-        
-        return new Date(tempDate.getTime() - (targetDate.getTime() - utcTime)).toISOString();
+        // Parse the local time string and convert it to UTC
+        // The localTimeString represents a time in the specified timezone
+        const localDate = parseISO(localTimeString);
+        const utcDate = fromZonedTime(localDate, timezone);
+        return utcDate.toISOString();
     }
 
-    /**
-     * Get timezone offset in minutes for a given timezone and date
-     * @param {string} timezone - Timezone identifier
-     * @param {Date} date - Date to check offset for
-     * @returns {number} Offset in minutes
-     */
-    getTimezoneOffset(timezone, date) {
-        const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
-        const tzDate = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
-        return (tzDate.getTime() - utcDate.getTime()) / 60000;
-    }
 
     /**
-     * Get time of day category from UTC date in specified timezone
-     * @param {Date} utcDate - UTC date
+     * Get time of day range that spans from start to end time
+     * @param {Date} startUTC - UTC start date
+     * @param {Date} endUTC - UTC end date
      * @param {string} timezone - Timezone identifier
-     * @returns {string} Time category
+     * @returns {string} Time range category (e.g., 'morning', 'morning-afternoon', 'afternoon-evening')
      */
-    getTimeOfDay(utcDate, timezone) {
-        const localHour = parseInt(utcDate.toLocaleString("en-US", { 
+    getTimeOfDayRange(startUTC, endUTC, timezone) {
+        const startHour = parseInt(startUTC.toLocaleString("en-US", { 
             timeZone: timezone, 
             hour: '2-digit', 
             hour12: false 
         }));
         
-        if (localHour < 12) return 'morning';
-        if (localHour < 17) return 'afternoon';
-        return 'evening';
+        const endHour = parseInt(endUTC.toLocaleString("en-US", { 
+            timeZone: timezone, 
+            hour: '2-digit', 
+            hour12: false 
+        }));
+        
+        // Define time periods: morning (0-11), afternoon (12-16), evening (17-23)
+        const getTimePeriod = (hour) => {
+            if (hour < 12) return 'morning';
+            if (hour < 17) return 'afternoon';
+            return 'evening';
+        };
+        
+        const startPeriod = getTimePeriod(startHour);
+        const endPeriod = getTimePeriod(endHour);
+        
+        // If same period, return single period
+        if (startPeriod === endPeriod) {
+            return startPeriod;
+        }
+        
+        // Handle cross-day appointments (rare but possible)
+        if (endHour < startHour) {
+            // Spans to next day - just return the start period for simplicity
+            return startPeriod;
+        }
+        
+        // Determine spanning periods
+        const periods = [];
+        if (startHour < 12 && endHour >= 12) periods.push('morning');
+        if (startHour < 17 && endHour >= 12) periods.push('afternoon');  
+        if (endHour >= 17) periods.push('evening');
+        
+        return periods.join('-');
     }
 
 
@@ -181,14 +198,14 @@ Please analyze the availability and instructions to suggest optimal appointment 
 
 1. **Available Time Slots**: Use the practitioner's free time slots, prioritizing those with good local time context
 2. **Local Time Preferences**: When instructions mention "morning appointments", use the LOCAL time context (e.g., 9 AM local, not 9 AM UTC)
-3. **Business Hours Compliance**: Respect normal business hours in the practitioner's local timezone (typically 8 AM - 6 PM local time)
-4. **Duration and Travel Time**: Account for appointment duration plus travel time requirements
-5. **Participant Preferences**: Respect participant's suitable days and times, interpreting these in local context
-6. **Service Type Timing (LOCAL TIME RULES)**:
+3. **Duration and Travel Time**: Account for appointment duration plus travel time requirements
+4. **Participant Preferences**: Respect participant's suitable days and times, interpreting these in local context
+   - **Note**: For reporting sessions, participants are not involved, so their preferences should be ignored
+5. **Service Type Timing (LOCAL TIME RULES)**:
    - **Non-reporting sessions**: Schedule Monday mornings through Thursday lunchtime (LOCAL TIME)
    - **Reporting sessions**: Schedule Thursday afternoons through Friday afternoons (LOCAL TIME)
-7. **Consistency Patterns**: When possible, maintain consistent day/time patterns using LOCAL time references
-8. **Conflict Minimization**: Optimize scheduling to minimize travel time and maximize efficiency
+6. **Consistency Patterns**: When possible, maintain consistent day/time patterns using LOCAL time references
+7. **Conflict Minimization**: Optimize scheduling to minimize travel time and maximize efficiency
 
 For each appointment suggestion, provide:
 - start: Start time in LOCAL time ISO format (YYYY-MM-DDTHH:MM:SS)
@@ -213,12 +230,7 @@ Also provide a summary with:
         console.log('🧠 Generating appointment suggestions with o3...');
         console.log(`📊 Processing appointment: ${appointment.service} (${appointment.duration}min + ${appointment.travelTime}min travel)`);
         console.log(`📅 Date range: ${appointment.dateRangeStart} to ${appointment.dateRangeEnd}`);
-        console.log(`📝 Prompt length: ${prompt.length} characters`);
-        console.log('\n' + '='.repeat(80));
-        console.log('📋 FINAL PROMPT TO SUGGESTION ENGINE LLM:');
-        console.log('='.repeat(80));
-        console.log(prompt);
-        console.log('='.repeat(80) + '\n');
+        console.log(`📝 Suggestion prompt length: ${prompt.length} characters`);
         
         const startTime = Date.now();
         

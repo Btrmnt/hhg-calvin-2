@@ -5,14 +5,15 @@ class ConflictChecker {
      * Checks suggested appointments for conflicts with practitioner availability
      * @param {Object} practitionerAvailability - Availability data matching practitioner-46932-availability.json format
      * @param {Object} suggestedAppointments - Output from AppointmentSuggestionEngine
-     * @returns {Object} Conflict analysis results
+     * @returns {Object} Enhanced suggestions with conflict status added to each appointment
      */
     checkConflicts(practitionerAvailability, suggestedAppointments) {
-        const results = {
-            validAppointments: [],
-            conflictedAppointments: [],
+        // Create enhanced suggestions structure that preserves original data
+        const enhancedSuggestions = {
+            ...suggestedAppointments,
+            suggestedAppointments: [],
             summary: {
-                totalSuggested: suggestedAppointments.suggestedAppointments?.length || 0,
+                ...suggestedAppointments.summary,
                 totalValid: 0,
                 totalConflicted: 0,
                 validationErrors: []
@@ -21,13 +22,13 @@ class ConflictChecker {
 
         // Validate input structure
         if (!practitionerAvailability || !practitionerAvailability.freeTimeSlots) {
-            results.summary.validationErrors.push('Invalid practitioner availability data structure');
-            return results;
+            enhancedSuggestions.summary.validationErrors.push('Invalid practitioner availability data structure');
+            return enhancedSuggestions;
         }
 
         if (!suggestedAppointments || !suggestedAppointments.suggestedAppointments) {
-            results.summary.validationErrors.push('Invalid suggested appointments data structure');
-            return results;
+            enhancedSuggestions.summary.validationErrors.push('Invalid suggested appointments data structure');
+            return enhancedSuggestions;
         }
 
         // Extract free time slots for easier processing
@@ -38,29 +39,29 @@ class ConflictChecker {
             originalSlot: slot
         }));
 
-        // Check each suggested appointment
+        // Check each suggested appointment and build enhanced suggestions
         for (const appointment of suggestedAppointments.suggestedAppointments) {
             const conflictCheck = this.checkSingleAppointment(appointment, freeSlots);
             
+            // Add conflict status to each appointment
+            const enhancedAppointment = {
+                ...appointment,
+                hasConflict: !conflictCheck.isValid,
+                conflictDetails: conflictCheck.isValid ? null : conflictCheck.conflicts,
+                matchedSlot: conflictCheck.isValid ? conflictCheck.matchedSlot : null
+            };
+            
+            enhancedSuggestions.suggestedAppointments.push(enhancedAppointment);
+            
+            // Update counters
             if (conflictCheck.isValid) {
-                results.validAppointments.push({
-                    ...appointment,
-                    matchedSlot: conflictCheck.matchedSlot,
-                    timeWithinSlot: conflictCheck.timeWithinSlot
-                });
+                enhancedSuggestions.summary.totalValid++;
             } else {
-                results.conflictedAppointments.push({
-                    ...appointment,
-                    conflicts: conflictCheck.conflicts
-                });
+                enhancedSuggestions.summary.totalConflicted++;
             }
         }
 
-        // Update summary
-        results.summary.totalValid = results.validAppointments.length;
-        results.summary.totalConflicted = results.conflictedAppointments.length;
-
-        return results;
+        return enhancedSuggestions;
     }
 
     /**
@@ -150,8 +151,12 @@ class ConflictChecker {
      * @param {Object} conflictResults - Results from checkConflicts
      * @returns {string} Human-readable report
      */
-    generateReport(conflictResults) {
-        const { validAppointments, conflictedAppointments, summary } = conflictResults;
+    generateReport(enhancedSuggestions) {
+        const { suggestedAppointments, summary } = enhancedSuggestions;
+        
+        // Separate appointments by conflict status
+        const validAppointments = suggestedAppointments.filter(apt => !apt.hasConflict);
+        const conflictedAppointments = suggestedAppointments.filter(apt => apt.hasConflict);
         
         let report = `=== APPOINTMENT CONFLICT ANALYSIS ===\n\n`;
         
@@ -187,7 +192,7 @@ class ConflictChecker {
                 report += `   Time: ${apt.start} to ${apt.end}\n`;
                 report += `   Location: ${apt.locationId}\n`;
                 report += `   Conflicts:\n`;
-                apt.conflicts.forEach(conflict => {
+                apt.conflictDetails.forEach(conflict => {
                     if (typeof conflict === 'string') {
                         report += `   - ${conflict}\n`;
                     } else {

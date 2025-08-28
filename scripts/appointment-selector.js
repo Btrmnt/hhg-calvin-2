@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { z } from 'zod';
+import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
+import { parseISO } from 'date-fns';
 
 const appointmentSelectionSchema = z.object({
     natural_response: z.string().describe("Human-readable explanation of the appointment selections made, including reasoning for each choice and any issues encountered"),
@@ -62,12 +64,12 @@ class AppointmentSelector {
                 const endUTC = new Date(slot.endDateTime);
                 
                 // Convert to local time string in ISO format
-                const localStart = startUTC.toLocaleString('sv-SE', { timeZone: practitionerTimezone });
-                const localEnd = endUTC.toLocaleString('sv-SE', { timeZone: practitionerTimezone });
+                const localStart = formatInTimeZone(startUTC, practitionerTimezone, 'yyyy-MM-dd HH:mm:ss');
+                const localEnd = formatInTimeZone(endUTC, practitionerTimezone, 'yyyy-MM-dd HH:mm:ss');
                 
                 // Get day and time context in local timezone
                 const dayOfWeek = startUTC.toLocaleDateString('en-US', { weekday: 'long', timeZone: practitionerTimezone });
-                const timeOfDay = this.getTimeOfDay(startUTC, practitionerTimezone);
+                const timeOfDay = this.getTimeOfDayRange(startUTC, endUTC, practitionerTimezone);
                 
                 return {
                     startDateTime: localStart,
@@ -75,8 +77,7 @@ class AppointmentSelector {
                     duration: slot.duration,
                     locationId: slot.locationId,
                     dayOfWeek: dayOfWeek,
-                    timeOfDay: timeOfDay,
-                    localTimeDescription: `${dayOfWeek} ${timeOfDay}`
+                    timeOfDay: timeOfDay
                 };
             })
         };
@@ -126,16 +127,11 @@ class AppointmentSelector {
      * @returns {string} UTC time in ISO format
      */
     convertLocalToUTC(localTimeString, timezone) {
-        // Create date object treating the string as being in the specified timezone
-        const tempDate = new Date(localTimeString);
-        
-        // Get what this time would be in UTC vs the specified timezone
-        const utcTime = tempDate.getTime() + (tempDate.getTimezoneOffset() * 60000);
-        
-        // Create new date in the target timezone 
-        const targetDate = new Date(utcTime + (this.getTimezoneOffset(timezone, tempDate) * 60000));
-        
-        return new Date(tempDate.getTime() - (targetDate.getTime() - utcTime)).toISOString();
+        // Parse the local time string and convert it to UTC
+        // The localTimeString represents a time in the specified timezone
+        const localDate = parseISO(localTimeString);
+        const utcDate = fromZonedTime(localDate, timezone);
+        return utcDate.toISOString();
     }
 
     /**
@@ -151,33 +147,64 @@ class AppointmentSelector {
     }
 
     /**
-     * Get time of day category from UTC date in specified timezone
-     * @param {Date} utcDate - UTC date
+     * Get time of day range that spans from start to end time
+     * @param {Date} startUTC - UTC start date
+     * @param {Date} endUTC - UTC end date
      * @param {string} timezone - Timezone identifier
-     * @returns {string} Time category
+     * @returns {string} Time range category (e.g., 'morning', 'morning-afternoon', 'afternoon-evening')
      */
-    getTimeOfDay(utcDate, timezone) {
-        const localHour = parseInt(utcDate.toLocaleString("en-US", { 
+    getTimeOfDayRange(startUTC, endUTC, timezone) {
+        const startHour = parseInt(startUTC.toLocaleString("en-US", { 
             timeZone: timezone, 
             hour: '2-digit', 
             hour12: false 
         }));
         
-        if (localHour < 12) return 'morning';
-        if (localHour < 17) return 'afternoon';
-        return 'evening';
+        const endHour = parseInt(endUTC.toLocaleString("en-US", { 
+            timeZone: timezone, 
+            hour: '2-digit', 
+            hour12: false 
+        }));
+        
+        // Define time periods: morning (0-11), afternoon (12-16), evening (17-23)
+        const getTimePeriod = (hour) => {
+            if (hour < 12) return 'morning';
+            if (hour < 17) return 'afternoon';
+            return 'evening';
+        };
+        
+        const startPeriod = getTimePeriod(startHour);
+        const endPeriod = getTimePeriod(endHour);
+        
+        // If same period, return single period
+        if (startPeriod === endPeriod) {
+            return startPeriod;
+        }
+        
+        // Handle cross-day appointments (rare but possible)
+        if (endHour < startHour) {
+            // Spans to next day - just return the start period for simplicity
+            return startPeriod;
+        }
+        
+        // Determine spanning periods
+        const periods = [];
+        if (startHour < 12 && endHour >= 12) periods.push('morning');
+        if (startHour < 17 && endHour >= 12) periods.push('afternoon');  
+        if (endHour >= 17) periods.push('evening');
+        
+        return periods.join('-');
     }
 
     /**
      * Select optimal appointments from suggestion engine results based on scheduling rules
      * @param {Object} sdmData - Extracted participant and appointment data from SDM
-     * @param {Array} suggestionResults - Array of suggestion engine results for each appointment
-     * @param {Array} conflictResults - Array of conflict checker results for each suggestion set
+     * @param {Array} suggestionResults - Array of enhanced suggestion results with conflict status
      * @param {Object} availabilityData - Practitioner availability data with timezone context
      * @param {string} schedulingInstructions - Additional scheduling instructions and context for the LLM
      * @returns {Object} Structured appointment selections with reasoning
      */
-    async selectAppointments(sdmData, suggestionResults, conflictResults, availabilityData, schedulingInstructions = '') {
+    async selectAppointments(sdmData, suggestionResults, availabilityData, schedulingInstructions = '') {
         // Validate inputs
         if (!sdmData || !sdmData.appointments || !Array.isArray(sdmData.appointments)) {
             throw new Error('Invalid SDM data structure - missing appointments array');
@@ -185,10 +212,6 @@ class AppointmentSelector {
 
         if (!Array.isArray(suggestionResults) || suggestionResults.length !== sdmData.appointments.length) {
             throw new Error('Suggestion results array must match the number of appointments in SDM data');
-        }
-
-        if (!Array.isArray(conflictResults) || conflictResults.length !== sdmData.appointments.length) {
-            throw new Error('Conflict results array must match the number of appointments in SDM data');
         }
 
         console.log('🔄 Starting AI appointment selection process...');
@@ -201,14 +224,8 @@ class AppointmentSelector {
         const localSuggestionResults = this.convertSuggestionsToLocalTime(suggestionResults, practitionerTimezone);
         
         // Build comprehensive prompt with all data and rules
-        console.log('📝 Building comprehensive selection prompt...');
-        const prompt = this.buildSelectionPrompt(sdmData, localSuggestionResults, conflictResults, localAvailabilityData, schedulingInstructions);
-        console.log(`📝 Prompt length: ${prompt.length} characters`);
-        console.log('\n' + '='.repeat(80));
-        console.log('📋 FINAL PROMPT TO SELECTOR LLM:');
-        console.log('='.repeat(80));
-        console.log(prompt);
-        console.log('='.repeat(80) + '\n');
+        const prompt = this.buildSelectionPrompt(sdmData, localSuggestionResults, localAvailabilityData, schedulingInstructions);
+        console.log(`📝 Selection prompt length: ${prompt.length} characters`);
 
         try {
             // Get structured response from LLM
@@ -255,7 +272,7 @@ class AppointmentSelector {
      * @param {string} schedulingInstructions - Additional scheduling instructions
      * @returns {string} Formatted prompt for LLM
      */
-    buildSelectionPrompt(sdmData, suggestionResults, conflictResults, availabilityData, schedulingInstructions = '') {
+    buildSelectionPrompt(sdmData, suggestionResults, availabilityData, schedulingInstructions = '') {
         const { participant, planDetails, servicePlanning, appointments } = sdmData;
 
         // Extract timezone context from availability data
@@ -295,22 +312,23 @@ ${schedulingInstructions}
 ` : ''}## SCHEDULING RULES (PRIORITY ORDER - TIMEZONE AWARE)
 1. **CONFLICTS**: Never select appointments marked as conflicted in the conflict checker results
 2. **PARTICIPANT PREFERENCES**: Respect participant's suitable days and times wherever possible (interpret time preferences in LOCAL timezone)
+   - **Note**: For reporting sessions, participants are not involved, so their preferences should be ignored
 3. **SESSION TYPE TIMING (LOCAL TIME)**:
    - Non-reporting sessions: Monday mornings through Thursday lunch times (LOCAL TIME - ${practitionerTimezone})
    - Reporting sessions: Thursday afternoons through Friday afternoons (LOCAL TIME - ${practitionerTimezone})
-4. **REGULAR CADENCE**: Maintain consistent scheduling patterns for similar session types using local time patterns
-5. **CONSISTENCY**: Schedule same appointment types on same day of week and time of day when possible (based on LOCAL time)
-6. **LOCAL TIME AWARENESS**: When analyzing suggestions, prioritize options that make sense in the practitioner's local timezone context
-7. **ALERT ISSUES**: If no suitable appointment can be found, provide detailed explanation including timezone considerations
+4. **AVAILABLE SLOTS ONLY**: Schedule appointments only within the practitioner's available time slots - do not assume any general business hours restrictions
+5. **REGULAR CADENCE**: Maintain consistent scheduling patterns for similar session types using local time patterns
+6. **CONSISTENCY**: Schedule same appointment types on same day of week and time of day when possible (based on LOCAL time)
+7. **LOCAL TIME AWARENESS**: When analyzing suggestions, prioritize options that make sense in the practitioner's local timezone context
+8. **ALERT ISSUES**: If no suitable appointment can be found, provide detailed explanation including timezone considerations
 
 ## APPOINTMENTS TO SCHEDULE
 
 `;
 
-        // Add each appointment with its suggestions and conflict status
+        // Add each appointment with its suggestions (now with conflict status included)
         appointments.forEach((appointment, index) => {
             const suggestions = suggestionResults[index];
-            const conflicts = conflictResults[index];
 
             prompt += `### Appointment ${index + 1}: ${appointment.service}
 - **Date Range**: ${appointment.dateRangeStart} to ${appointment.dateRangeEnd}
@@ -324,14 +342,12 @@ ${schedulingInstructions}
             if (suggestions.suggestedAppointments && suggestions.suggestedAppointments.length > 0) {
                 suggestions.suggestedAppointments.forEach((suggestion, suggestionIndex) => {
                     const startDate = new Date(suggestion.start);
-                    const dayOfWeek = startDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
-                    const timeOfDay = this.getTimeOfDay(startDate);
+                    const endDate = new Date(suggestion.end);
+                    const dayOfWeek = startDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: practitionerTimezone });
+                    const timeOfDay = this.getTimeOfDayRange(startDate, endDate, practitionerTimezone);
                     
-                    // Check if this suggestion has conflicts
-                    const hasConflict = conflicts.conflictedAppointments && 
-                        conflicts.conflictedAppointments.some(conflicted => 
-                            conflicted.start === suggestion.start && conflicted.end === suggestion.end
-                        );
+                    // Use conflict status directly from enhanced suggestion
+                    const hasConflict = suggestion.hasConflict;
 
                     prompt += `  ${suggestionIndex + 1}. ${suggestion.start} to ${suggestion.end} (${dayOfWeek} ${timeOfDay})
      - Confidence: ${suggestion.confidence}
@@ -345,10 +361,10 @@ ${schedulingInstructions}
 `;
             }
 
-            // Add conflict summary
-            if (conflicts.summary) {
+            // Add conflict summary from enhanced suggestions
+            if (suggestions.summary) {
                 prompt += `
-**Conflict Summary**: ${conflicts.summary.totalValid} valid, ${conflicts.summary.totalConflicted} conflicted
+**Conflict Summary**: ${suggestions.summary.totalValid} valid, ${suggestions.summary.totalConflicted} conflicted
 `;
             }
 
@@ -380,17 +396,6 @@ Provide both a natural language explanation and structured data for your selecti
         return prompt;
     }
 
-    /**
-     * Determine time of day category from a date
-     * @param {Date} date - Date object
-     * @returns {string} Time category
-     */
-    getTimeOfDay(date) {
-        const hour = date.getUTCHours();
-        if (hour < 12) return 'morning';
-        if (hour < 17) return 'afternoon';
-        return 'evening';
-    }
 
     /**
      * Generate a summary report of the selection process

@@ -100,7 +100,7 @@ Convert all dates to ISO format (YYYY-MM-DD). For example:
         };
 
         console.log('⚙️  Configuring o3 model...');
-        console.log(`📊 Prompt length: ${prompt.length} characters`);
+        console.log(`📊 Extraction prompt length: ${prompt.length} characters`);
         
         const model = new ChatOpenAI({
             ...modelConfig,
