@@ -96,11 +96,10 @@ Convert all dates to ISO format (YYYY-MM-DD). For example:
 
         const modelConfig = {
             modelName: "o3",
-            temperature: 1,
-            streaming: true
+            temperature: 1
         };
 
-        console.log('⚙️  Configuring o3 model with streaming...');
+        console.log('⚙️  Configuring o3 model...');
         console.log(`📊 Prompt length: ${prompt.length} characters`);
         
         const model = new ChatOpenAI({
@@ -117,8 +116,7 @@ Convert all dates to ISO format (YYYY-MM-DD). For example:
         try {
             const messages = [new HumanMessage(prompt)];
             
-            // For o3, we'll use regular invoke as streaming with structured output has limitations
-            console.log('🤖 Processing with o3 (reasoning may take time)...');
+            console.log('🤖 Processing with o3...');
             response = await structuredModel.invoke(messages);
             
         } catch (error) {

@@ -81,7 +81,6 @@ class AppointmentSelector {
         try {
             // Get structured response from LLM
             console.log('🧠 Calling o3 for intelligent appointment selection...');
-            console.log('🤖 Processing with o3 (complex reasoning may take time)...');
             
             const startTime = Date.now();
             const structuredLlm = this.model.withStructuredOutput(appointmentSelectionSchema);
