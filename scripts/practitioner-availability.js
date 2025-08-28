@@ -364,38 +364,14 @@ class PractitionerAvailabilityCalculator {
                 totalFreeSlots: freeTimeSlots.length,
                 totalFreeMinutes: freeTimeSlots.reduce((sum, slot) => sum + (slot.duration / (1000 * 60)), 0)
             },
-            freeTimeSlots: freeTimeSlots.map(slot => {
-                const startUTC = new Date(slot.startDateTime);
-                const endUTC = new Date(slot.endDateTime);
-                
-                // Add local timezone information
-                const localStartDateTime = startUTC.toLocaleString("en-US", { timeZone: practitionerTimezone });
-                const localEndDateTime = endUTC.toLocaleString("en-US", { timeZone: practitionerTimezone });
-                const dayOfWeek = getDayOfWeek(startUTC, practitionerTimezone);
-                const timeOfDay = getTimeOfDay(startUTC, practitionerTimezone);
-                const localTimeDescription = formatLocalTime(startUTC, practitionerTimezone) + 
-                    ' - ' + endUTC.toLocaleTimeString('en-AU', { 
-                        timeZone: practitionerTimezone,
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    }) + ' ' + getTimezoneAbbr(practitionerTimezone);
-                
-                return {
-                    // UTC times (original)
-                    startDateTime: slot.startDateTime.toISOString(),
-                    endDateTime: slot.endDateTime.toISOString(),
-                    duration: `${Math.floor(slot.duration / (1000 * 60))} minutes`,
-                    durationMs: slot.duration,
-                    locationId: slot.locationId,
-                    
-                    // Local timezone information (new)
-                    localStartDateTime: localStartDateTime,
-                    localEndDateTime: localEndDateTime,
-                    localTimeDescription: localTimeDescription,
-                    dayOfWeek: dayOfWeek,
-                    timeOfDay: timeOfDay
-                };
-            })
+            freeTimeSlots: freeTimeSlots.map(slot => ({
+                // Store only UTC times - conversions happen at display/LLM interface
+                startDateTime: slot.startDateTime.toISOString(),
+                endDateTime: slot.endDateTime.toISOString(),
+                duration: `${Math.floor(slot.duration / (1000 * 60))} minutes`,
+                durationMs: slot.duration,
+                locationId: slot.locationId
+            }))
         };
     }
 }

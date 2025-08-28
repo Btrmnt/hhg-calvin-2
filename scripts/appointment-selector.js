@@ -10,8 +10,8 @@ const appointmentSelectionSchema = z.object({
         caseName: z.string().nullable().describe("Name or identifier for the case"),
         clientId: z.number().nullable().describe("Client/participant ID"),
         appointments: z.array(z.object({
-            start: z.string().describe("Selected appointment start time in ISO format"),
-            end: z.string().describe("Selected appointment end time in ISO format"),
+            start: z.string().describe("Selected appointment start time in LOCAL time ISO format (YYYY-MM-DDTHH:MM:SS)"),
+            end: z.string().describe("Selected appointment end time in LOCAL time ISO format (YYYY-MM-DDTHH:MM:SS)"),
             serviceId: z.number().describe("Service ID for this appointment"),
             locationId: z.number().describe("Location ID for this appointment"),
             practitionerId: z.number().describe("Practitioner ID"),
@@ -47,6 +47,128 @@ class AppointmentSelector {
     }
 
     /**
+     * Convert availability data from UTC to local time for LLM consumption
+     * @param {Object} availability - Availability data with UTC timestamps
+     * @returns {Object} Availability data with local time timestamps
+     */
+    convertAvailabilityToLocalTime(availability) {
+        const practitionerTimezone = availability.practitionerTimezone;
+        
+        return {
+            ...availability,
+            note: `All times are in ${practitionerTimezone} local time. Work exclusively in this timezone.`,
+            freeTimeSlots: availability.freeTimeSlots.map(slot => {
+                const startUTC = new Date(slot.startDateTime);
+                const endUTC = new Date(slot.endDateTime);
+                
+                // Convert to local time string in ISO format
+                const localStart = startUTC.toLocaleString('sv-SE', { timeZone: practitionerTimezone });
+                const localEnd = endUTC.toLocaleString('sv-SE', { timeZone: practitionerTimezone });
+                
+                // Get day and time context in local timezone
+                const dayOfWeek = startUTC.toLocaleDateString('en-US', { weekday: 'long', timeZone: practitionerTimezone });
+                const timeOfDay = this.getTimeOfDay(startUTC, practitionerTimezone);
+                
+                return {
+                    startDateTime: localStart,
+                    endDateTime: localEnd,
+                    duration: slot.duration,
+                    locationId: slot.locationId,
+                    dayOfWeek: dayOfWeek,
+                    timeOfDay: timeOfDay,
+                    localTimeDescription: `${dayOfWeek} ${timeOfDay}`
+                };
+            })
+        };
+    }
+
+    /**
+     * Convert suggestion results from UTC to local time for LLM consumption
+     * @param {Array} suggestionResults - Array of suggestion results with UTC timestamps
+     * @param {string} practitionerTimezone - Practitioner's timezone
+     * @returns {Array} Suggestion results with local time timestamps
+     */
+    convertSuggestionsToLocalTime(suggestionResults, practitionerTimezone) {
+        return suggestionResults.map(suggestions => ({
+            ...suggestions,
+            suggestedAppointments: suggestions.suggestedAppointments ? suggestions.suggestedAppointments.map(appointment => ({
+                ...appointment,
+                start: new Date(appointment.start).toLocaleString('sv-SE', { timeZone: practitionerTimezone }),
+                end: new Date(appointment.end).toLocaleString('sv-SE', { timeZone: practitionerTimezone })
+            })) : []
+        }));
+    }
+
+    /**
+     * Convert LLM selection output from local time back to UTC
+     * @param {Object} selectionResult - LLM selection with local timestamps
+     * @param {string} practitionerTimezone - Practitioner's timezone
+     * @returns {Object} Selection result with UTC timestamps
+     */
+    convertSelectionsToUTC(selectionResult, practitionerTimezone) {
+        return {
+            ...selectionResult,
+            structured_response: {
+                ...selectionResult.structured_response,
+                appointments: selectionResult.structured_response.appointments.map(appointment => ({
+                    ...appointment,
+                    start: this.convertLocalToUTC(appointment.start, practitionerTimezone),
+                    end: this.convertLocalToUTC(appointment.end, practitionerTimezone)
+                }))
+            }
+        };
+    }
+
+    /**
+     * Convert local time string to UTC ISO format
+     * @param {string} localTimeString - Local time string
+     * @param {string} timezone - Timezone identifier
+     * @returns {string} UTC time in ISO format
+     */
+    convertLocalToUTC(localTimeString, timezone) {
+        // Create date object treating the string as being in the specified timezone
+        const tempDate = new Date(localTimeString);
+        
+        // Get what this time would be in UTC vs the specified timezone
+        const utcTime = tempDate.getTime() + (tempDate.getTimezoneOffset() * 60000);
+        
+        // Create new date in the target timezone 
+        const targetDate = new Date(utcTime + (this.getTimezoneOffset(timezone, tempDate) * 60000));
+        
+        return new Date(tempDate.getTime() - (targetDate.getTime() - utcTime)).toISOString();
+    }
+
+    /**
+     * Get timezone offset in minutes for a given timezone and date
+     * @param {string} timezone - Timezone identifier
+     * @param {Date} date - Date to check offset for
+     * @returns {number} Offset in minutes
+     */
+    getTimezoneOffset(timezone, date) {
+        const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
+        const tzDate = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
+        return (tzDate.getTime() - utcDate.getTime()) / 60000;
+    }
+
+    /**
+     * Get time of day category from UTC date in specified timezone
+     * @param {Date} utcDate - UTC date
+     * @param {string} timezone - Timezone identifier
+     * @returns {string} Time category
+     */
+    getTimeOfDay(utcDate, timezone) {
+        const localHour = parseInt(utcDate.toLocaleString("en-US", { 
+            timeZone: timezone, 
+            hour: '2-digit', 
+            hour12: false 
+        }));
+        
+        if (localHour < 12) return 'morning';
+        if (localHour < 17) return 'afternoon';
+        return 'evening';
+    }
+
+    /**
      * Select optimal appointments from suggestion engine results based on scheduling rules
      * @param {Object} sdmData - Extracted participant and appointment data from SDM
      * @param {Array} suggestionResults - Array of suggestion engine results for each appointment
@@ -73,10 +195,20 @@ class AppointmentSelector {
         console.log(`👤 Participant: ${sdmData.participant.participantName}`);
         console.log(`📊 Analyzing ${sdmData.appointments.length} appointments with scheduling constraints`);
         
+        // Convert data to local time for LLM consumption
+        const practitionerTimezone = availabilityData.practitionerTimezone;
+        const localAvailabilityData = this.convertAvailabilityToLocalTime(availabilityData);
+        const localSuggestionResults = this.convertSuggestionsToLocalTime(suggestionResults, practitionerTimezone);
+        
         // Build comprehensive prompt with all data and rules
         console.log('📝 Building comprehensive selection prompt...');
-        const prompt = this.buildSelectionPrompt(sdmData, suggestionResults, conflictResults, availabilityData, schedulingInstructions);
+        const prompt = this.buildSelectionPrompt(sdmData, localSuggestionResults, conflictResults, localAvailabilityData, schedulingInstructions);
         console.log(`📝 Prompt length: ${prompt.length} characters`);
+        console.log('\n' + '='.repeat(80));
+        console.log('📋 FINAL PROMPT TO SELECTOR LLM:');
+        console.log('='.repeat(80));
+        console.log(prompt);
+        console.log('='.repeat(80) + '\n');
 
         try {
             // Get structured response from LLM
@@ -84,10 +216,10 @@ class AppointmentSelector {
             
             const startTime = Date.now();
             const structuredLlm = this.model.withStructuredOutput(appointmentSelectionSchema);
-            const result = await structuredLlm.invoke([
+            const localResult = await structuredLlm.invoke([
                 {
                     role: "system",
-                    content: "You are an expert healthcare appointment scheduler. Your job is to select the optimal appointments from suggested options while following all scheduling rules and participant preferences."
+                    content: "You are an expert healthcare appointment scheduler. Your job is to select the optimal appointments from suggested options while following all scheduling rules and participant preferences. Work exclusively in the practitioner's local timezone."
                 },
                 {
                     role: "user", 
@@ -95,15 +227,18 @@ class AppointmentSelector {
                 }
             ]);
             
+            // Convert LLM's local time selections back to UTC
+            const utcResult = this.convertSelectionsToUTC(localResult, practitionerTimezone);
+            
             const endTime = Date.now();
             const duration = ((endTime - startTime) / 1000).toFixed(2);
             
             console.log(`✅ Appointment selection completed in ${duration}s`);
-            console.log(`📋 Status: ${result.status}`);
-            console.log(`🎯 Selected ${result.structured_response.appointments.length} appointments`);
-            console.log(`⚠️  Identified ${result.structured_response.issues.length} scheduling issues`);
+            console.log(`📋 Status: ${utcResult.status}`);
+            console.log(`🎯 Selected ${utcResult.structured_response.appointments.length} appointments`);
+            console.log(`⚠️  Identified ${utcResult.structured_response.issues.length} scheduling issues`);
 
-            return result;
+            return utcResult;
 
         } catch (error) {
             console.error('❌ Appointment selection failed:', error.message);
@@ -222,22 +357,24 @@ ${schedulingInstructions}
         });
 
         prompt += `
-## SELECTION INSTRUCTIONS (TIMEZONE-AWARE)
+## SELECTION INSTRUCTIONS (LOCAL TIME ONLY)
+
+IMPORTANT: Work exclusively in ${practitionerTimezone} local time. All times in the data above are local times.
 
 For each appointment above, select the BEST suggestion that:
 1. Has NO conflicts (✅ status only)
-2. Best matches participant preferences and scheduling rules (interpreting times in LOCAL ${practitionerTimezone} context)
-3. Maintains consistency with other selected appointments where possible (based on LOCAL time patterns)
-4. Follows session type timing preferences wherever possible, using LOCAL TIME:
-   - Non-reporting sessions: Monday mornings through Thursday lunch times (LOCAL TIME)
-   - Reporting sessions: Thursday afternoons through Friday afternoons (LOCAL TIME)
-5. Makes logical sense from a LOCAL timezone perspective (e.g., "morning appointments" should be actual morning hours in ${practitionerTimezone})
+2. Best matches participant preferences and scheduling rules  
+3. Maintains consistency with other selected appointments where possible
+4. Follows session type timing preferences:
+   - Non-reporting sessions: Monday mornings through Thursday lunch times
+   - Reporting sessions: Thursday afternoons through Friday afternoons
+5. Makes logical sense from a local time perspective (9 AM means 9 AM local time)
 
-When analyzing suggestions, pay attention to the local time descriptions and day/time patterns provided in the suggestion data.
+When providing selected appointment times, use LOCAL time in ISO format (YYYY-MM-DDTHH:MM:SS).
 
-If no suitable option exists for any appointment, include it in the "issues" array with a detailed explanation including timezone considerations and recommendation.
+If no suitable option exists for any appointment, include it in the "issues" array with a detailed explanation and recommendation.
 
-Provide both a natural language explanation and structured data for your selections, referencing LOCAL time context in your reasoning.
+Provide both a natural language explanation and structured data for your selections, working entirely in local time context.
 `;
 
         return prompt;
