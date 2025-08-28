@@ -8,10 +8,12 @@ import { AppointmentSelector } from './appointment-selector.js';
 
 class MasterScheduler {
     constructor() {
+        console.log('🚀 Initializing Master Scheduler...');
         this.availabilityCalculator = new PractitionerAvailabilityCalculator();
         this.suggestionEngine = new AppointmentSuggestionEngine();
         this.conflictChecker = new ConflictChecker();
         this.appointmentSelector = new AppointmentSelector();
+        console.log('✅ All scheduling components initialized');
     }
 
     /**
@@ -24,33 +26,59 @@ class MasterScheduler {
      * @returns {Object} Complete scheduling results
      */
     async scheduleAppointments(sdmInput, schedulingInstructions = '', practitionerId = 46932, startDate = '2025-08-01', endDate = '2025-08-31') {
-        console.log('🚀 Starting Master Scheduler...\n');
+        const totalStartTime = Date.now();
+        
+        console.log('='.repeat(60));
+        console.log('🚀 MASTER SCHEDULER - END-TO-END APPOINTMENT SCHEDULING');
+        console.log('='.repeat(60));
+        console.log(`⚙️  Configuration: Practitioner ${practitionerId}`);
+        console.log(`⏰ Started at: ${new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} AEST`);
+        console.log(`📅 Date range will be determined from SDM data`);
+        console.log();
         
         try {
             // Step 1: Extract structured data from SDM
-            console.log('📋 Step 1: Extracting structured data from SDM...');
+            const step1StartTime = Date.now();
+            console.log('📋 STEP 1: EXTRACTING STRUCTURED DATA FROM SDM');
+            console.log('-'.repeat(50));
             const sdmData = await convertSDMToStructured(sdmInput);
-            console.log(`   ✅ Extracted ${sdmData.appointments.length} appointments for ${sdmData.participant.participantName}`);
-            console.log(`   📅 Plan period: ${sdmData.planDetails.planStartDate} to ${sdmData.planDetails.planEndDate}`);
+            const step1Duration = ((Date.now() - step1StartTime) / 1000).toFixed(2);
+            // Extract appointment date range from SDM data
+            const appointmentDates = sdmData.appointments.flatMap(apt => [apt.dateRangeStart, apt.dateRangeEnd]);
+            const earliestDate = appointmentDates.reduce((min, date) => date < min ? date : min);
+            const latestDate = appointmentDates.reduce((max, date) => date > max ? date : max);
+            
+            console.log(`✅ Extracted ${sdmData.appointments.length} appointments for ${sdmData.participant.participantName}`);
+            console.log(`📅 Plan period: ${sdmData.planDetails.planStartDate} to ${sdmData.planDetails.planEndDate}`);
+            console.log(`📅 Appointment range: ${earliestDate} to ${latestDate}`);
+            console.log(`💰 Budget: $${sdmData.planDetails.totalPlanBudget} (${sdmData.planDetails.totalPlanBudgetHours} hours)`);
+            console.log(`⏱️  Step 1 completed in ${step1Duration}s`);
             console.log();
 
             // Step 2: Get practitioner availability
-            console.log('📅 Step 2: Calculating practitioner availability...');
-            const availabilityData = await this.availabilityCalculator.calculateAvailability(
+            const step2StartTime = Date.now();
+            console.log('📅 STEP 2: CALCULATING PRACTITIONER AVAILABILITY');
+            console.log('-'.repeat(50));
+            console.log(`🔍 Using dynamic date range from appointments: ${earliestDate} to ${latestDate}`);
+            const availability = await this.availabilityCalculator.calculateAvailability(
                 practitionerId, 
-                startDate, 
-                endDate
+                earliestDate, 
+                latestDate
             );
-            const availability = JSON.parse(availabilityData);
-            console.log(`   ✅ Found ${availability.summary.totalFreeSlots} free slots`);
-            console.log(`   ⏰ Total available time: ${availability.summary.totalFreeMinutes} minutes`);
+            const step2Duration = ((Date.now() - step2StartTime) / 1000).toFixed(2);
+            console.log(`✅ Found ${availability.summary.totalFreeSlots} free slots`);
+            console.log(`⏰ Total available time: ${availability.summary.totalFreeMinutes} minutes`);
+            console.log(`📊 Average slot duration: ${(availability.summary.totalFreeMinutes / availability.summary.totalFreeSlots).toFixed(0)} minutes`);
+            console.log(`⏱️  Step 2 completed in ${step2Duration}s`);
             console.log();
 
             // Step 3: Process appointments in parallel
-            console.log('🤖 Step 3: Processing appointments through suggestion engine and conflict checker...');
+            const step3StartTime = Date.now();
+            console.log('🤖 STEP 3: PROCESSING APPOINTMENTS (PARALLEL)');
+            console.log('-'.repeat(50));
             
             const appointmentPromises = sdmData.appointments.map(async (appointment, index) => {
-                console.log(`   📝 Processing appointment ${index + 1}: ${appointment.service}`);
+                console.log(`📝 [${index + 1}/${sdmData.appointments.length}] Processing: ${appointment.service}`);
                 
                 // Prepare case details (everything except appointments)
                 const caseDetails = {
@@ -63,14 +91,52 @@ class MasterScheduler {
                 const suggestions = await this.suggestionEngine.suggestAppointments(
                     appointment,
                     caseDetails,
-                    availabilityData,
+                    JSON.stringify(availability, null, 2),
                     schedulingInstructions
                 );
 
                 // Check for conflicts
                 const conflicts = this.conflictChecker.checkConflicts(availability, suggestions);
 
-                console.log(`      ✅ ${conflicts.summary.totalValid} valid suggestions, ${conflicts.summary.totalConflicted} conflicted`);
+                console.log(`   ✅ [${index + 1}] Generated ${suggestions.summary.totalAppointmentsSuggested} suggestions`);
+                console.log(`   🔍 [${index + 1}] Conflict check: ${conflicts.summary.totalValid} valid, ${conflicts.summary.totalConflicted} conflicted`);
+                
+                // Debug: Show all suggestions with conflict status
+                if (suggestions.suggestedAppointments && suggestions.suggestedAppointments.length > 0) {
+                    console.log(`   📋 [${index + 1}] Suggestions for ${appointment.service}:`);
+                    suggestions.suggestedAppointments.forEach((suggestion, sugIndex) => {
+                        const isConflicted = conflicts.conflictedAppointments.some(conflicted => 
+                            conflicted.start === suggestion.start && conflicted.end === suggestion.end
+                        );
+                        const status = isConflicted ? '❌' : '✅';
+                        const startDate = new Date(suggestion.start);
+                        const endDate = new Date(suggestion.end);
+                        
+                        // UTC time with date
+                        const utcStart = startDate.toISOString().substring(0, 16).replace('T', ' ');
+                        const utcEnd = endDate.toISOString().substring(11, 16);
+                        const utcTime = `${utcStart}-${utcEnd}`;
+                        
+                        // Local AEST time
+                        const localStart = startDate.toLocaleString('en-AU', { 
+                            month: 'short', 
+                            day: 'numeric',
+                            hour: '2-digit', 
+                            minute: '2-digit',
+                            hour12: false,
+                            timeZone: 'Australia/Melbourne' 
+                        });
+                        const localEnd = endDate.toLocaleString('en-AU', { 
+                            hour: '2-digit', 
+                            minute: '2-digit',
+                            hour12: false,
+                            timeZone: 'Australia/Melbourne' 
+                        });
+                        
+                        const dayOfWeek = startDate.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+                        console.log(`      ${sugIndex + 1}. ${status} ${dayOfWeek} ${localStart}-${localEnd} AEST | ${utcTime} UTC (${suggestion.confidence})`);
+                    });
+                }
 
                 return {
                     appointment,
@@ -81,10 +147,15 @@ class MasterScheduler {
             });
 
             const appointmentResults = await Promise.all(appointmentPromises);
-            console.log(`   ✅ Processed all ${appointmentResults.length} appointments\n`);
+            const step3Duration = ((Date.now() - step3StartTime) / 1000).toFixed(2);
+            console.log(`✅ Completed parallel processing of ${appointmentResults.length} appointments`);
+            console.log(`⏱️  Step 3 completed in ${step3Duration}s`);
+            console.log();
 
             // Step 4: Select optimal appointments
-            console.log('🎯 Step 4: Selecting optimal appointments with AI selector...');
+            const step4StartTime = Date.now();
+            console.log('🎯 STEP 4: AI APPOINTMENT SELECTION');
+            console.log('-'.repeat(50));
             
             const suggestionResults = appointmentResults.map(result => result.suggestions);
             const conflictResults = appointmentResults.map(result => result.conflicts);
@@ -93,14 +164,21 @@ class MasterScheduler {
                 sdmData,
                 suggestionResults,
                 conflictResults,
+                availability,
                 schedulingInstructions
             );
 
-            console.log(`   ✅ Selection completed with status: ${selectionResult.status}`);
-            console.log(`   📋 Selected ${selectionResult.structured_response.appointments.length} appointments`);
-            console.log(`   ⚠️  ${selectionResult.structured_response.issues.length} issues identified\n`);
+            const step4Duration = ((Date.now() - step4StartTime) / 1000).toFixed(2);
+            console.log(`✅ Selection completed with status: ${selectionResult.status.toUpperCase()}`);
+            console.log(`📋 Selected ${selectionResult.structured_response.appointments.length}/${sdmData.appointments.length} appointments`);
+            console.log(`⚠️  ${selectionResult.structured_response.issues.length} issues requiring attention`);
+            console.log(`⏱️  Step 4 completed in ${step4Duration}s`);
+            console.log();
 
             // Step 5: Generate comprehensive results
+            const step5StartTime = Date.now();
+            console.log('📊 STEP 5: GENERATING COMPREHENSIVE RESULTS');
+            console.log('-'.repeat(50));
             const results = {
                 summary: {
                     participant: sdmData.participant.participantName,
@@ -113,7 +191,7 @@ class MasterScheduler {
                 sdmData,
                 availability: {
                     practitionerId,
-                    dateRange: { startDate, endDate },
+                    dateRange: { startDate: earliestDate, endDate: latestDate },
                     totalFreeSlots: availability.summary.totalFreeSlots,
                     totalFreeMinutes: availability.summary.totalFreeMinutes
                 },
@@ -122,11 +200,33 @@ class MasterScheduler {
                 humanReadableReport: this.generateHumanReadableReport(selectionResult, sdmData)
             };
 
-            console.log('✅ Master Scheduler completed successfully!\n');
+            const step5Duration = ((Date.now() - step5StartTime) / 1000).toFixed(2);
+            console.log('✅ Results compilation completed');
+            console.log('📄 Human-readable report generated with AEST timezone');
+            console.log(`⏱️  Step 5 completed in ${step5Duration}s`);
+            console.log();
+            
+            // Total timing summary
+            const totalDuration = ((Date.now() - totalStartTime) / 1000).toFixed(2);
+            console.log('='.repeat(60));
+            console.log('🎉 MASTER SCHEDULER COMPLETED SUCCESSFULLY!');
+            console.log('='.repeat(60));
+            console.log('⏰ TIMING SUMMARY:');
+            console.log(`   Step 1 (SDM Extraction): ${step1Duration}s`);
+            console.log(`   Step 2 (Availability): ${step2Duration}s`);
+            console.log(`   Step 3 (Suggestions + Conflicts): ${step3Duration}s`);
+            console.log(`   Step 4 (AI Selection): ${step4Duration}s`);
+            console.log(`   Step 5 (Results Generation): ${step5Duration}s`);
+            console.log(`   📊 TOTAL TIME: ${totalDuration}s`);
+            console.log(`   🏁 Finished at: ${new Date().toLocaleString('en-AU', { timeZone: 'Australia/Melbourne' })} AEST`);
+            console.log('='.repeat(60));
             return results;
 
         } catch (error) {
-            console.error('❌ Error in Master Scheduler:', error.message);
+            console.error('='.repeat(60));
+            console.error('❌ MASTER SCHEDULER FAILED');
+            console.error('='.repeat(60));
+            console.error('💥 Error:', error.message);
             throw error;
         }
     }
@@ -192,7 +292,7 @@ class MasterScheduler {
             report += `## ⚠️ SCHEDULING ISSUES\n\n`;
             
             structured_response.issues.forEach((issue, index) => {
-                report += `### ${index + 1}. ${issue.service}\n`;
+                report += `### ${index + 1}. ${issue.service} (Appointment #${issue.appointmentIndex + 1})\n`;
                 report += `- **❌ Issue:** ${issue.issue}\n`;
                 report += `- **💡 Recommendation:** ${issue.recommendation}\n\n`;
             });

@@ -5,6 +5,61 @@ import 'dotenv/config';
  * availability windows with existing appointments.
  */
 
+/**
+ * Timezone utility functions
+ */
+function convertUTCToLocal(utcDate, timezone) {
+    return new Date(utcDate.toLocaleString("en-US", { timeZone: timezone }));
+}
+
+function formatLocalTime(utcDate, timezone) {
+    const options = {
+        weekday: 'long',
+        year: 'numeric', 
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: timezone
+    };
+    
+    const localDateStr = utcDate.toLocaleDateString('en-AU', options);
+    const timezoneName = getTimezoneAbbr(timezone);
+    return `${localDateStr} ${timezoneName}`;
+}
+
+function getTimezoneAbbr(timezone) {
+    // Simple mapping for common Australian timezones
+    const timezoneMap = {
+        'Australia/Melbourne': 'AEST/AEDT',
+        'Australia/Sydney': 'AEST/AEDT', 
+        'Australia/Brisbane': 'AEST',
+        'Australia/Adelaide': 'ACST/ACDT',
+        'Australia/Perth': 'AWST',
+        'Australia/Darwin': 'ACST'
+    };
+    return timezoneMap[timezone] || timezone;
+}
+
+function getTimeOfDay(utcDate, timezone) {
+    const localHour = parseInt(utcDate.toLocaleString("en-US", { 
+        timeZone: timezone, 
+        hour: '2-digit', 
+        hour12: false 
+    }));
+    
+    if (localHour < 12) return 'morning';
+    if (localHour < 17) return 'afternoon';
+    return 'evening';
+}
+
+function getDayOfWeek(utcDate, timezone) {
+    return utcDate.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        timeZone: timezone 
+    });
+}
+
 class PractitionerAvailabilityCalculator {
     constructor() {
         this.windmillBaseUrl = process.env.WINDMILL_BASE_URL;
@@ -68,6 +123,51 @@ class PractitionerAvailabilityCalculator {
             return {
                 status: 'error',
                 error_message: `Network error retrieving appointments: ${error.message}`
+            };
+        }
+    }
+
+    /**
+     * Retrieves practitioner details including timezone information
+     */
+    async getSinglePractitioner(practitionerId) {
+        console.log(`Fetching practitioner details for practitioner ${practitionerId}`);
+        
+        const url = `${this.windmillBaseUrl}/api/w/${this.windmillWorkspaceId}/jobs/run_wait_result/f/f/splose/get_single_practitioner`;
+        const headers = {
+            'Authorization': `Bearer ${this.windmillToken}`,
+            'Content-Type': 'application/json',
+        };
+        
+        const data = {
+            practitionerId: practitionerId
+        };
+        
+        try {
+            console.log(`HTTP request to Windmill: POST ${url}`);
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(data)
+            });
+            
+            if (response.status === 200) {
+                const result = await response.json();
+                return {
+                    status: 'success',
+                    data: result
+                };
+            } else {
+                const errorText = await response.text();
+                return {
+                    status: 'error',
+                    error_message: `Failed to retrieve practitioner ${practitionerId}. ${response.status} ${errorText}`
+                };
+            }
+        } catch (error) {
+            return {
+                status: 'error',
+                error_message: `Network error retrieving practitioner: ${error.message}`
             };
         }
     }
@@ -209,11 +309,16 @@ class PractitionerAvailabilityCalculator {
         console.log(`\nCalculating availability for practitioner ${practitionerId}`);
         console.log(`Date range: ${startDate} to ${endDate}\n`);
         
-        // Fetch appointments and availability data
-        const [scheduleResult, availabilityResult] = await Promise.all([
+        // Fetch practitioner details, appointments and availability data
+        const [practitionerResult, scheduleResult, availabilityResult] = await Promise.all([
+            this.getSinglePractitioner(practitionerId),
             this.getPractitionerCurrentSchedule(practitionerId, startDate, endDate),
             this.getPractitionerCurrentAvailability(practitionerId, startDate, endDate)
         ]);
+        
+        if (practitionerResult.status === 'error') {
+            throw new Error(practitionerResult.error_message);
+        }
         
         if (scheduleResult.status === 'error') {
             throw new Error(scheduleResult.error_message);
@@ -223,6 +328,12 @@ class PractitionerAvailabilityCalculator {
             throw new Error(availabilityResult.error_message);
         }
         
+        // Extract practitioner timezone information (avoiding PII)
+        const practitioner = practitionerResult.data;
+        const practitionerTimezone = practitioner.timezone || practitioner.timeZone || 'Australia/Melbourne'; // fallback
+        
+        console.log(`Practitioner ID: ${practitionerId}`);
+        console.log(`Timezone: ${practitionerTimezone}`);
         console.log(`Found ${scheduleResult.data?.length || 0} appointments`);
         console.log(`Found ${availabilityResult.data.data?.length || 0} availability entries\n`);
         
@@ -239,8 +350,10 @@ class PractitionerAvailabilityCalculator {
         
         console.log(`Calculated ${freeTimeSlots.length} free time slots\n`);
         
+        // Enhanced return structure with timezone information
         return {
             practitionerId: practitionerId,
+            practitionerTimezone: practitionerTimezone,
             dateRange: {
                 start: startDate,
                 end: endDate
@@ -251,13 +364,38 @@ class PractitionerAvailabilityCalculator {
                 totalFreeSlots: freeTimeSlots.length,
                 totalFreeMinutes: freeTimeSlots.reduce((sum, slot) => sum + (slot.duration / (1000 * 60)), 0)
             },
-            freeTimeSlots: freeTimeSlots.map(slot => ({
-                startDateTime: slot.startDateTime.toISOString(),
-                endDateTime: slot.endDateTime.toISOString(),
-                duration: `${Math.floor(slot.duration / (1000 * 60))} minutes`,
-                durationMs: slot.duration,
-                locationId: slot.locationId
-            }))
+            freeTimeSlots: freeTimeSlots.map(slot => {
+                const startUTC = new Date(slot.startDateTime);
+                const endUTC = new Date(slot.endDateTime);
+                
+                // Add local timezone information
+                const localStartDateTime = startUTC.toLocaleString("en-US", { timeZone: practitionerTimezone });
+                const localEndDateTime = endUTC.toLocaleString("en-US", { timeZone: practitionerTimezone });
+                const dayOfWeek = getDayOfWeek(startUTC, practitionerTimezone);
+                const timeOfDay = getTimeOfDay(startUTC, practitionerTimezone);
+                const localTimeDescription = formatLocalTime(startUTC, practitionerTimezone) + 
+                    ' - ' + endUTC.toLocaleTimeString('en-AU', { 
+                        timeZone: practitionerTimezone,
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    }) + ' ' + getTimezoneAbbr(practitionerTimezone);
+                
+                return {
+                    // UTC times (original)
+                    startDateTime: slot.startDateTime.toISOString(),
+                    endDateTime: slot.endDateTime.toISOString(),
+                    duration: `${Math.floor(slot.duration / (1000 * 60))} minutes`,
+                    durationMs: slot.duration,
+                    locationId: slot.locationId,
+                    
+                    // Local timezone information (new)
+                    localStartDateTime: localStartDateTime,
+                    localEndDateTime: localEndDateTime,
+                    localTimeDescription: localTimeDescription,
+                    dayOfWeek: dayOfWeek,
+                    timeOfDay: timeOfDay
+                };
+            })
         };
     }
 }

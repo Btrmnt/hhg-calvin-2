@@ -40,8 +40,10 @@ const sdmStructuredSchema = z.object({
 });
 
 async function convertSDMToStructured(inputData) {
+    console.log('🔄 Starting SDM extraction process...');
+    
     try {
-        
+        console.log('📝 Building extraction prompt...');
         const prompt = `Extract and structure data from this SDM planning tool data.
 
 Input Data:
@@ -93,12 +95,14 @@ Convert all dates to ISO format (YYYY-MM-DD). For example:
 - "Thursday, 07 Aug 2025" becomes "2025-08-07"`;
 
         const modelConfig = {
-            // modelName: "gpt-4o",
             modelName: "o3",
-            // temperature: 0.1,
             temperature: 1,
+            streaming: true
         };
 
+        console.log('⚙️  Configuring o3 model with streaming...');
+        console.log(`📊 Prompt length: ${prompt.length} characters`);
+        
         const model = new ChatOpenAI({
             ...modelConfig,
             openAIApiKey: process.env.OPENAI_API_KEY,
@@ -106,28 +110,33 @@ Convert all dates to ISO format (YYYY-MM-DD). For example:
         
         const structuredModel = model.withStructuredOutput(sdmStructuredSchema);
         
-        console.log('Prompt length:', prompt.length);
-        console.log('Model config:', modelConfig);
-        
+        console.log('🧠 Calling o3 model for SDM extraction...');
         const startTime = Date.now();
         let response;
+        
         try {
             const messages = [new HumanMessage(prompt)];
+            
+            // For o3, we'll use regular invoke as streaming with structured output has limitations
+            console.log('🤖 Processing with o3 (reasoning may take time)...');
             response = await structuredModel.invoke(messages);
+            
         } catch (error) {
-            console.error('LangChain call error:', error.message);
-            console.error('Error details:', error);
+            console.error('❌ SDM extraction failed:', error.message);
+            console.error('🔍 Error details:', error);
             throw error;
         }
-        const endTime = Date.now();
         
-        console.log('LangChain call time:', (endTime - startTime) + 'ms');
-        console.log('Structured response received successfully');
+        const endTime = Date.now();
+        const duration = ((endTime - startTime) / 1000).toFixed(2);
+        
+        console.log(`✅ SDM extraction completed in ${duration}s`);
+        console.log(`📋 Extracted ${response.appointments.length} appointments for ${response.participant.participantName}`);
         
         return response;
         
     } catch (error) {
-        console.error('Error extracting structured SDM data:', error);
+        console.error('❌ Fatal error in SDM extraction:', error.message);
         throw error;
     }
 }

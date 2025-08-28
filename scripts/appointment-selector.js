@@ -38,10 +38,12 @@ const appointmentSelectionSchema = z.object({
 
 class AppointmentSelector {
     constructor() {
+        console.log('⚙️  Initializing Appointment Selector with o3...');
         this.model = new ChatOpenAI({
             model: 'o3',
             maxTokens: 8000
         });
+        console.log('✅ Appointment Selector ready');
     }
 
     /**
@@ -49,10 +51,11 @@ class AppointmentSelector {
      * @param {Object} sdmData - Extracted participant and appointment data from SDM
      * @param {Array} suggestionResults - Array of suggestion engine results for each appointment
      * @param {Array} conflictResults - Array of conflict checker results for each suggestion set
+     * @param {Object} availabilityData - Practitioner availability data with timezone context
      * @param {string} schedulingInstructions - Additional scheduling instructions and context for the LLM
      * @returns {Object} Structured appointment selections with reasoning
      */
-    async selectAppointments(sdmData, suggestionResults, conflictResults, schedulingInstructions = '') {
+    async selectAppointments(sdmData, suggestionResults, conflictResults, availabilityData, schedulingInstructions = '') {
         // Validate inputs
         if (!sdmData || !sdmData.appointments || !Array.isArray(sdmData.appointments)) {
             throw new Error('Invalid SDM data structure - missing appointments array');
@@ -66,11 +69,21 @@ class AppointmentSelector {
             throw new Error('Conflict results array must match the number of appointments in SDM data');
         }
 
+        console.log('🔄 Starting AI appointment selection process...');
+        console.log(`👤 Participant: ${sdmData.participant.participantName}`);
+        console.log(`📊 Analyzing ${sdmData.appointments.length} appointments with scheduling constraints`);
+        
         // Build comprehensive prompt with all data and rules
-        const prompt = this.buildSelectionPrompt(sdmData, suggestionResults, conflictResults, schedulingInstructions);
+        console.log('📝 Building comprehensive selection prompt...');
+        const prompt = this.buildSelectionPrompt(sdmData, suggestionResults, conflictResults, availabilityData, schedulingInstructions);
+        console.log(`📝 Prompt length: ${prompt.length} characters`);
 
         try {
             // Get structured response from LLM
+            console.log('🧠 Calling o3 for intelligent appointment selection...');
+            console.log('🤖 Processing with o3 (complex reasoning may take time)...');
+            
+            const startTime = Date.now();
             const structuredLlm = this.model.withStructuredOutput(appointmentSelectionSchema);
             const result = await structuredLlm.invoke([
                 {
@@ -82,11 +95,19 @@ class AppointmentSelector {
                     content: prompt
                 }
             ]);
+            
+            const endTime = Date.now();
+            const duration = ((endTime - startTime) / 1000).toFixed(2);
+            
+            console.log(`✅ Appointment selection completed in ${duration}s`);
+            console.log(`📋 Status: ${result.status}`);
+            console.log(`🎯 Selected ${result.structured_response.appointments.length} appointments`);
+            console.log(`⚠️  Identified ${result.structured_response.issues.length} scheduling issues`);
 
             return result;
 
         } catch (error) {
-            console.error('Error in appointment selection:', error);
+            console.error('❌ Appointment selection failed:', error.message);
             throw new Error(`Failed to select appointments: ${error.message}`);
         }
     }
@@ -96,13 +117,23 @@ class AppointmentSelector {
      * @param {Object} sdmData - SDM extraction data
      * @param {Array} suggestionResults - Suggestion engine results
      * @param {Array} conflictResults - Conflict checker results
+     * @param {Object} availabilityData - Practitioner availability data with timezone context
      * @param {string} schedulingInstructions - Additional scheduling instructions
      * @returns {string} Formatted prompt for LLM
      */
-    buildSelectionPrompt(sdmData, suggestionResults, conflictResults, schedulingInstructions = '') {
+    buildSelectionPrompt(sdmData, suggestionResults, conflictResults, availabilityData, schedulingInstructions = '') {
         const { participant, planDetails, servicePlanning, appointments } = sdmData;
 
+        // Extract timezone context from availability data
+        const practitionerTimezone = availabilityData.practitionerTimezone || 'Australia/Melbourne';
+        const practitionerId = availabilityData.practitionerId;
+
         let prompt = `# APPOINTMENT SELECTION TASK
+
+## TIMEZONE CONTEXT
+- **Practitioner ID**: ${practitionerId}
+- **Practitioner Timezone**: ${practitionerTimezone}
+- **Important**: All time-based decisions should consider the practitioner's LOCAL timezone
 
 ## PARTICIPANT INFORMATION
 - **Name**: ${participant.participantName}
@@ -127,15 +158,16 @@ ${schedulingInstructions ? `## ADDITIONAL SCHEDULING INSTRUCTIONS
 
 ${schedulingInstructions}
 
-` : ''}## SCHEDULING RULES (PRIORITY ORDER)
+` : ''}## SCHEDULING RULES (PRIORITY ORDER - TIMEZONE AWARE)
 1. **CONFLICTS**: Never select appointments marked as conflicted in the conflict checker results
-2. **PARTICIPANT PREFERENCES**: Respect participant's suitable days and times wherever possible
-3. **SESSION TYPE TIMING**: 
-   - Non-reporting sessions: Monday mornings through Thursday lunch times (preferred)
-   - Reporting sessions: Thursday afternoons through Friday afternoons (preferred)
-4. **REGULAR CADENCE**: Maintain consistent scheduling patterns for similar session types
-5. **CONSISTENCY**: Schedule same appointment types on same day of week and time of day when possible
-6. **ALERT ISSUES**: If no suitable appointment can be found, provide detailed explanation
+2. **PARTICIPANT PREFERENCES**: Respect participant's suitable days and times wherever possible (interpret time preferences in LOCAL timezone)
+3. **SESSION TYPE TIMING (LOCAL TIME)**:
+   - Non-reporting sessions: Monday mornings through Thursday lunch times (LOCAL TIME - ${practitionerTimezone})
+   - Reporting sessions: Thursday afternoons through Friday afternoons (LOCAL TIME - ${practitionerTimezone})
+4. **REGULAR CADENCE**: Maintain consistent scheduling patterns for similar session types using local time patterns
+5. **CONSISTENCY**: Schedule same appointment types on same day of week and time of day when possible (based on LOCAL time)
+6. **LOCAL TIME AWARENESS**: When analyzing suggestions, prioritize options that make sense in the practitioner's local timezone context
+7. **ALERT ISSUES**: If no suitable appointment can be found, provide detailed explanation including timezone considerations
 
 ## APPOINTMENTS TO SCHEDULE
 
@@ -191,17 +223,22 @@ ${schedulingInstructions}
         });
 
         prompt += `
-## SELECTION INSTRUCTIONS
+## SELECTION INSTRUCTIONS (TIMEZONE-AWARE)
 
 For each appointment above, select the BEST suggestion that:
 1. Has NO conflicts (✅ status only)
-2. Best matches participant preferences and scheduling rules
-3. Maintains consistency with other selected appointments where possible
-4. Follows session type timing preferences (reporting vs non-reporting)
+2. Best matches participant preferences and scheduling rules (interpreting times in LOCAL ${practitionerTimezone} context)
+3. Maintains consistency with other selected appointments where possible (based on LOCAL time patterns)
+4. Follows session type timing preferences wherever possible, using LOCAL TIME:
+   - Non-reporting sessions: Monday mornings through Thursday lunch times (LOCAL TIME)
+   - Reporting sessions: Thursday afternoons through Friday afternoons (LOCAL TIME)
+5. Makes logical sense from a LOCAL timezone perspective (e.g., "morning appointments" should be actual morning hours in ${practitionerTimezone})
 
-If no suitable option exists for any appointment, include it in the "issues" array with a detailed explanation and recommendation.
+When analyzing suggestions, pay attention to the local time descriptions and day/time patterns provided in the suggestion data.
 
-Provide both a natural language explanation and structured data for your selections.
+If no suitable option exists for any appointment, include it in the "issues" array with a detailed explanation including timezone considerations and recommendation.
+
+Provide both a natural language explanation and structured data for your selections, referencing LOCAL time context in your reasoning.
 `;
 
         return prompt;
