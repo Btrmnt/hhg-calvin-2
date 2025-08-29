@@ -1,64 +1,11 @@
 import 'dotenv/config';
+import { getTimezoneAbbr, formatLocalTime, getTimeOfDay, getDayOfWeek } from './utils/timezone-utils.js';
 
 /**
  * Calculates available time slots for a practitioner by comparing their 
  * availability windows with existing appointments.
  */
 
-/**
- * Timezone utility functions
- */
-function convertUTCToLocal(utcDate, timezone) {
-    return new Date(utcDate.toLocaleString("en-US", { timeZone: timezone }));
-}
-
-function formatLocalTime(utcDate, timezone) {
-    const options = {
-        weekday: 'long',
-        year: 'numeric', 
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZone: timezone
-    };
-    
-    const localDateStr = utcDate.toLocaleDateString('en-AU', options);
-    const timezoneName = getTimezoneAbbr(timezone);
-    return `${localDateStr} ${timezoneName}`;
-}
-
-function getTimezoneAbbr(timezone) {
-    // Simple mapping for common Australian timezones
-    const timezoneMap = {
-        'Australia/Melbourne': 'AEST/AEDT',
-        'Australia/Sydney': 'AEST/AEDT', 
-        'Australia/Brisbane': 'AEST',
-        'Australia/Adelaide': 'ACST/ACDT',
-        'Australia/Perth': 'AWST',
-        'Australia/Darwin': 'ACST'
-    };
-    return timezoneMap[timezone] || timezone;
-}
-
-function getTimeOfDay(utcDate, timezone) {
-    const localHour = parseInt(utcDate.toLocaleString("en-US", { 
-        timeZone: timezone, 
-        hour: '2-digit', 
-        hour12: false 
-    }));
-    
-    if (localHour < 12) return 'morning';
-    if (localHour < 17) return 'afternoon';
-    return 'evening';
-}
-
-function getDayOfWeek(utcDate, timezone) {
-    return utcDate.toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        timeZone: timezone 
-    });
-}
 
 class PractitionerAvailabilityCalculator {
     constructor() {

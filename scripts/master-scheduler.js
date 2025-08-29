@@ -5,6 +5,7 @@ import { PractitionerAvailabilityCalculator } from './practitioner-availability.
 import { AppointmentSuggestionEngine } from './appointment-suggestion-engine.js';
 import { ConflictChecker } from './conflict-checker.js';
 import { AppointmentSelector } from './appointment-selector.js';
+import { getTimezoneAbbr } from './utils/timezone-utils.js';
 
 class MasterScheduler {
     constructor() {
@@ -117,7 +118,7 @@ class MasterScheduler {
                         
                         // Use practitioner's actual timezone
                         const practitionerTimezone = availability.practitionerTimezone || 'Australia/Melbourne';
-                        const timezoneAbbr = this.getTimezoneAbbr(practitionerTimezone);
+                        const timezoneAbbr = getTimezoneAbbr(practitionerTimezone);
                         
                         // Local time in practitioner's timezone
                         const localStart = startDate.toLocaleString('en-AU', { 
@@ -230,23 +231,6 @@ class MasterScheduler {
         }
     }
 
-    /**
-     * Get timezone abbreviation for display
-     * @param {string} timezone - Timezone identifier
-     * @returns {string} Timezone abbreviation
-     */
-    getTimezoneAbbr(timezone) {
-        // Simple mapping for common Australian timezones
-        const timezoneMap = {
-            'Australia/Melbourne': 'AEST/AEDT',
-            'Australia/Sydney': 'AEST/AEDT', 
-            'Australia/Brisbane': 'AEST',
-            'Australia/Adelaide': 'ACST/ACDT',
-            'Australia/Perth': 'AWST',
-            'Australia/Darwin': 'ACST'
-        };
-        return timezoneMap[timezone] || timezone.split('/')[1] || timezone;
-    }
 
     /**
      * Generate human-readable report with practitioner timezone conversion
@@ -257,7 +241,7 @@ class MasterScheduler {
      */
     generateHumanReadableReport(selectionResult, sdmData, practitionerTimezone = 'Australia/Melbourne') {
         const { natural_response, structured_response, status } = selectionResult;
-        const timezoneAbbr = this.getTimezoneAbbr(practitionerTimezone);
+        const timezoneAbbr = getTimezoneAbbr(practitionerTimezone);
         
         let report = `# 📅 APPOINTMENT SCHEDULING REPORT\n\n`;
         

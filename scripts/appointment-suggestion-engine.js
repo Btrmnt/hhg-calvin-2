@@ -3,8 +3,10 @@ import fs from 'fs';
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage } from '@langchain/core/messages';
 import { z } from 'zod';
-import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
-import { parseISO } from 'date-fns';
+import { 
+    convertLocalToUTC,
+    convertAvailabilityToLocalTime
+} from './utils/timezone-utils.js';
 
 const appointmentSuggestionSchema = z.object({
     suggestedAppointments: z.array(z.object({
@@ -45,40 +47,6 @@ class AppointmentSuggestionEngine {
         console.log('✅ Appointment Suggestion Engine ready');
     }
 
-    /**
-     * Convert availability data from UTC to local time for LLM consumption
-     * @param {Object} availability - Availability data with UTC timestamps
-     * @returns {Object} Availability data with local time timestamps  
-     */
-    convertAvailabilityToLocalTime(availability) {
-        const practitionerTimezone = availability.practitionerTimezone;
-        
-        return {
-            ...availability,
-            note: `All times are in ${practitionerTimezone} local time. When suggesting appointments, provide times in this local timezone.`,
-            freeTimeSlots: availability.freeTimeSlots.map(slot => {
-                const startUTC = new Date(slot.startDateTime);
-                const endUTC = new Date(slot.endDateTime);
-                
-                // Convert to local time string in ISO-like format for LLM clarity
-                const localStart = formatInTimeZone(startUTC, practitionerTimezone, 'yyyy-MM-dd HH:mm:ss');
-                const localEnd = formatInTimeZone(endUTC, practitionerTimezone, 'yyyy-MM-dd HH:mm:ss');
-                
-                // Get day and time context in local timezone
-                const dayOfWeek = startUTC.toLocaleDateString('en-US', { weekday: 'long', timeZone: practitionerTimezone });
-                const timeOfDay = this.getTimeOfDayRange(startUTC, endUTC, practitionerTimezone);
-                
-                return {
-                    startDateTime: localStart,
-                    endDateTime: localEnd,
-                    duration: slot.duration,
-                    locationId: slot.locationId,
-                    dayOfWeek: dayOfWeek,
-                    timeOfDay: timeOfDay
-                };
-            })
-        };
-    }
 
     /**
      * Convert LLM suggestions from local time back to UTC
@@ -91,76 +59,12 @@ class AppointmentSuggestionEngine {
             ...suggestions,
             suggestedAppointments: suggestions.suggestedAppointments.map(appointment => ({
                 ...appointment,
-                start: this.convertLocalToUTC(appointment.start, practitionerTimezone),
-                end: this.convertLocalToUTC(appointment.end, practitionerTimezone)
+                start: convertLocalToUTC(appointment.start, practitionerTimezone),
+                end: convertLocalToUTC(appointment.end, practitionerTimezone)
             }))
         };
     }
 
-    /**
-     * Convert local time string to UTC ISO format
-     * @param {string} localTimeString - Local time string
-     * @param {string} timezone - Timezone identifier
-     * @returns {string} UTC time in ISO format
-     */
-    convertLocalToUTC(localTimeString, timezone) {
-        // Parse the local time string and convert it to UTC
-        // The localTimeString represents a time in the specified timezone
-        const localDate = parseISO(localTimeString);
-        const utcDate = fromZonedTime(localDate, timezone);
-        return utcDate.toISOString();
-    }
-
-
-    /**
-     * Get time of day range that spans from start to end time
-     * @param {Date} startUTC - UTC start date
-     * @param {Date} endUTC - UTC end date
-     * @param {string} timezone - Timezone identifier
-     * @returns {string} Time range category (e.g., 'morning', 'morning-afternoon', 'afternoon-evening')
-     */
-    getTimeOfDayRange(startUTC, endUTC, timezone) {
-        const startHour = parseInt(startUTC.toLocaleString("en-US", { 
-            timeZone: timezone, 
-            hour: '2-digit', 
-            hour12: false 
-        }));
-        
-        const endHour = parseInt(endUTC.toLocaleString("en-US", { 
-            timeZone: timezone, 
-            hour: '2-digit', 
-            hour12: false 
-        }));
-        
-        // Define time periods: morning (0-11), afternoon (12-16), evening (17-23)
-        const getTimePeriod = (hour) => {
-            if (hour < 12) return 'morning';
-            if (hour < 17) return 'afternoon';
-            return 'evening';
-        };
-        
-        const startPeriod = getTimePeriod(startHour);
-        const endPeriod = getTimePeriod(endHour);
-        
-        // If same period, return single period
-        if (startPeriod === endPeriod) {
-            return startPeriod;
-        }
-        
-        // Handle cross-day appointments (rare but possible)
-        if (endHour < startHour) {
-            // Spans to next day - just return the start period for simplicity
-            return startPeriod;
-        }
-        
-        // Determine spanning periods
-        const periods = [];
-        if (startHour < 12 && endHour >= 12) periods.push('morning');
-        if (startHour < 17 && endHour >= 12) periods.push('afternoon');  
-        if (endHour >= 17) periods.push('evening');
-        
-        return periods.join('-');
-    }
 
 
     async callLLM(appointment, caseDetails = null, availabilityData, schedulingInstructions = '') {
@@ -169,7 +73,7 @@ class AppointmentSuggestionEngine {
         const practitionerTimezone = availability.practitionerTimezone || 'Australia/Melbourne';
         
         // Convert availability data to local time for LLM consumption
-        const localAvailabilityData = this.convertAvailabilityToLocalTime(availability);
+        const localAvailabilityData = convertAvailabilityToLocalTime(availability);
         
         const prompt = `You are an expert appointment scheduling assistant. You will receive appointment details, case information, practitioner availability data and scheduling instructions.
 
@@ -197,8 +101,8 @@ SCHEDULING RULES (LOCAL TIME ONLY):
 Please analyze the availability and instructions to suggest optimal appointment times. Unless otherwise specified in the instructions, provide 5 different time slot suggestions for each requested appointment. Consider:
 
 1. **Available Time Slots**: Use the practitioner's free time slots, prioritizing those with good local time context
-2. **Local Time Preferences**: When instructions mention "morning appointments", use the LOCAL time context (e.g., 9 AM local, not 9 AM UTC)
-3. **Duration and Travel Time**: Account for appointment duration plus travel time requirements
+2. **Local Time Preferences**: When instructions mention time of day e.g. "morning", use the LOCAL time context (e.g., 9 AM local, not 9 AM UTC)
+3. **Duration and Travel Time**: Account for appointment duration plus any travel time requirements
 4. **Participant Preferences**: Respect participant's suitable days and times, interpreting these in local context
    - **Note**: For reporting sessions, participants are not involved, so their preferences should be ignored
 5. **Service Type Timing (LOCAL TIME RULES)**:

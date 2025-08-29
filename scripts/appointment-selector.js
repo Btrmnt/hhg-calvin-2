@@ -1,8 +1,11 @@
 import 'dotenv/config';
 import { ChatOpenAI } from '@langchain/openai';
 import { z } from 'zod';
-import { fromZonedTime, formatInTimeZone } from 'date-fns-tz';
-import { parseISO } from 'date-fns';
+import { 
+    getTimeOfDayRange,
+    convertLocalToUTC,
+    convertAvailabilityToLocalTime
+} from './utils/timezone-utils.js';
 
 const appointmentSelectionSchema = z.object({
     natural_response: z.string().describe("Human-readable explanation of the appointment selections made, including reasoning for each choice and any issues encountered"),
@@ -48,40 +51,6 @@ class AppointmentSelector {
         console.log('✅ Appointment Selector ready');
     }
 
-    /**
-     * Convert availability data from UTC to local time for LLM consumption
-     * @param {Object} availability - Availability data with UTC timestamps
-     * @returns {Object} Availability data with local time timestamps
-     */
-    convertAvailabilityToLocalTime(availability) {
-        const practitionerTimezone = availability.practitionerTimezone;
-        
-        return {
-            ...availability,
-            note: `All times are in ${practitionerTimezone} local time. Work exclusively in this timezone.`,
-            freeTimeSlots: availability.freeTimeSlots.map(slot => {
-                const startUTC = new Date(slot.startDateTime);
-                const endUTC = new Date(slot.endDateTime);
-                
-                // Convert to local time string in ISO format
-                const localStart = formatInTimeZone(startUTC, practitionerTimezone, 'yyyy-MM-dd HH:mm:ss');
-                const localEnd = formatInTimeZone(endUTC, practitionerTimezone, 'yyyy-MM-dd HH:mm:ss');
-                
-                // Get day and time context in local timezone
-                const dayOfWeek = startUTC.toLocaleDateString('en-US', { weekday: 'long', timeZone: practitionerTimezone });
-                const timeOfDay = this.getTimeOfDayRange(startUTC, endUTC, practitionerTimezone);
-                
-                return {
-                    startDateTime: localStart,
-                    endDateTime: localEnd,
-                    duration: slot.duration,
-                    locationId: slot.locationId,
-                    dayOfWeek: dayOfWeek,
-                    timeOfDay: timeOfDay
-                };
-            })
-        };
-    }
 
     /**
      * Convert suggestion results from UTC to local time for LLM consumption
@@ -113,88 +82,13 @@ class AppointmentSelector {
                 ...selectionResult.structured_response,
                 appointments: selectionResult.structured_response.appointments.map(appointment => ({
                     ...appointment,
-                    start: this.convertLocalToUTC(appointment.start, practitionerTimezone),
-                    end: this.convertLocalToUTC(appointment.end, practitionerTimezone)
+                    start: convertLocalToUTC(appointment.start, practitionerTimezone),
+                    end: convertLocalToUTC(appointment.end, practitionerTimezone)
                 }))
             }
         };
     }
 
-    /**
-     * Convert local time string to UTC ISO format
-     * @param {string} localTimeString - Local time string
-     * @param {string} timezone - Timezone identifier
-     * @returns {string} UTC time in ISO format
-     */
-    convertLocalToUTC(localTimeString, timezone) {
-        // Parse the local time string and convert it to UTC
-        // The localTimeString represents a time in the specified timezone
-        const localDate = parseISO(localTimeString);
-        const utcDate = fromZonedTime(localDate, timezone);
-        return utcDate.toISOString();
-    }
-
-    /**
-     * Get timezone offset in minutes for a given timezone and date
-     * @param {string} timezone - Timezone identifier
-     * @param {Date} date - Date to check offset for
-     * @returns {number} Offset in minutes
-     */
-    getTimezoneOffset(timezone, date) {
-        const utcDate = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
-        const tzDate = new Date(date.toLocaleString('en-US', { timeZone: timezone }));
-        return (tzDate.getTime() - utcDate.getTime()) / 60000;
-    }
-
-    /**
-     * Get time of day range that spans from start to end time
-     * @param {Date} startUTC - UTC start date
-     * @param {Date} endUTC - UTC end date
-     * @param {string} timezone - Timezone identifier
-     * @returns {string} Time range category (e.g., 'morning', 'morning-afternoon', 'afternoon-evening')
-     */
-    getTimeOfDayRange(startUTC, endUTC, timezone) {
-        const startHour = parseInt(startUTC.toLocaleString("en-US", { 
-            timeZone: timezone, 
-            hour: '2-digit', 
-            hour12: false 
-        }));
-        
-        const endHour = parseInt(endUTC.toLocaleString("en-US", { 
-            timeZone: timezone, 
-            hour: '2-digit', 
-            hour12: false 
-        }));
-        
-        // Define time periods: morning (0-11), afternoon (12-16), evening (17-23)
-        const getTimePeriod = (hour) => {
-            if (hour < 12) return 'morning';
-            if (hour < 17) return 'afternoon';
-            return 'evening';
-        };
-        
-        const startPeriod = getTimePeriod(startHour);
-        const endPeriod = getTimePeriod(endHour);
-        
-        // If same period, return single period
-        if (startPeriod === endPeriod) {
-            return startPeriod;
-        }
-        
-        // Handle cross-day appointments (rare but possible)
-        if (endHour < startHour) {
-            // Spans to next day - just return the start period for simplicity
-            return startPeriod;
-        }
-        
-        // Determine spanning periods
-        const periods = [];
-        if (startHour < 12 && endHour >= 12) periods.push('morning');
-        if (startHour < 17 && endHour >= 12) periods.push('afternoon');  
-        if (endHour >= 17) periods.push('evening');
-        
-        return periods.join('-');
-    }
 
     /**
      * Select optimal appointments from suggestion engine results based on scheduling rules
@@ -220,7 +114,7 @@ class AppointmentSelector {
         
         // Convert data to local time for LLM consumption
         const practitionerTimezone = availabilityData.practitionerTimezone;
-        const localAvailabilityData = this.convertAvailabilityToLocalTime(availabilityData);
+        const localAvailabilityData = convertAvailabilityToLocalTime(availabilityData);
         const localSuggestionResults = this.convertSuggestionsToLocalTime(suggestionResults, practitionerTimezone);
         
         // Build comprehensive prompt with all data and rules
@@ -344,7 +238,7 @@ ${schedulingInstructions}
                     const startDate = new Date(suggestion.start);
                     const endDate = new Date(suggestion.end);
                     const dayOfWeek = startDate.toLocaleDateString('en-US', { weekday: 'long', timeZone: practitionerTimezone });
-                    const timeOfDay = this.getTimeOfDayRange(startDate, endDate, practitionerTimezone);
+                    const timeOfDay = getTimeOfDayRange(startDate, endDate, practitionerTimezone);
                     
                     // Use conflict status directly from enhanced suggestion
                     const hasConflict = suggestion.hasConflict;
